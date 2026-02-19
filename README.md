@@ -16,8 +16,4 @@ https://thedan64.github.io/inkwell/inkwell/index.html
 
 https://llvm.org/docs/Frontend/PerformanceTips.html
 
-to-do list:
-
-LibFuzzer em cada fase do compilador
-
-Modular bem o projeto para facilmente acrescentar novas features
+LibFuzzer
