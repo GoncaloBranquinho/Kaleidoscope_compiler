@@ -1,0 +1,104 @@
+use crate::lexer::tokens::{Token, LexingError};
+use crate::parser::ast;
+
+grammar;
+
+extern {
+  type Location = usize;
+  type Error = LexingError;
+
+  enum Token {
+    "def"      => Token::Def,
+    "extern"   => Token::Extern,
+    "id"       => Token::Identifier(<String>),
+    "lit_d"    => Token::Number(<f64>),
+    "("        => Token::LParen,
+    ")"        => Token::RParen,
+    "+"        => Token::Add,
+    "-"        => Token::Sub,
+    "/"        => Token::Div,
+    "*"        => Token::Mult,
+    ">="       => Token::GreaterEq,
+    "<="       => Token::LessEq,
+    ">"        => Token::Greater,
+    "<"        => Token::Less,
+    "="        => Token::Equal,
+    "/="       => Token::NotEqual,
+    ","        => Token::Comma,
+  }
+}
+
+pub Program: Vec<ast::Statement> = {
+  <stmts:Statement*> => stmts
+}
+
+pub Statement: ast::Statement = {
+  "def" <name:"id"> "(" <args:ParamList> ")" <body:Expr> => ast::Statement::FunctionDecl {name, args, body}
+}
+
+pub Expr: Box<ast::Expr> = {
+  RelExpr,
+}
+
+pub RelExpr: Box<ast::Expr> = {
+    <left:Tier1> "=" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Eq, left , right }),
+    <left:Tier1> "<" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Lt, left , right }),
+    <left:Tier1> "<=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Le, left , right }),
+    <left:Tier1> "/=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Ne, left , right }),
+    <left:Tier1> ">" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Gt, left , right }),
+    <left:Tier1> ">=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Ge, left , right }),
+    Tier1,
+}
+
+pub Tier1: Box<ast::Expr> = {
+  Tier<Tier1_Op,Tier2>,
+}
+
+pub Tier2: Box<ast::Expr> = {
+  Tier<Tier2_Op,Term>,
+}
+
+pub Term: Box<ast::Expr> = {
+  <value:"lit_d">                    => Box::new(ast::Expr::DoubleLit {value}),
+  <name:"id"> "(" <args:ArgList> ")" => Box::new(ast::Expr::Call {name, args}),
+  <name:"id">                        => Box::new(ast::Expr::Var {name}),
+  "(" <Expr> ")",
+}
+
+pub Param: ast::Arg = {
+  <name:"id"> => ast::Arg { name, typ: ast::Type::Double }
+}
+
+ParamList: Vec<ast::Arg> = Comma<Param>;
+ArgList: Vec<Box<ast::Expr>> = Comma<Expr>;
+
+Tier<Op, Next>: Box<ast::Expr> = {
+    <left:Tier<Op, Next>> <op:Op> <right:Next>
+        => Box::new(ast::Expr::Binary {
+            op,
+            left,
+            right,
+        }),
+    Next,
+}
+
+Tier1_Op: ast::BinaryOp = {
+  "+" => ast::BinaryOp::Add,
+  "-" => ast::BinaryOp::Sub,
+}
+
+Tier2_Op: ast::BinaryOp = {
+  "*" => ast::BinaryOp::Mult,
+  "/" => ast::BinaryOp::Div,
+}
+
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};

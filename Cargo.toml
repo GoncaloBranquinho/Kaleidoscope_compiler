@@ -3,5 +3,10 @@ name = "kaleidoscope_compiler"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+lalrpop = "0.23.0"
+
 [dependencies]
-inkwell = { version = "0.8.0", features = ["llvm18-1"] }
+logos = "0.16.1"
+lalrpop-util = { version = "0.23.0" }
+inkwell = { version = "0.8.0", features = ["llvm20-1"] }
