@@ -1,6 +1,7 @@
 use lalrpop_util::ParseError;
 use crate::lexer::tokens::{Token, LexingError};
 use std::fmt;
+use owo_colors::OwoColorize;
 
 
 #[derive(Debug)]
@@ -37,16 +38,16 @@ impl fmt::Display for Token {
 
 impl fmt::Display for LexingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unexpected token: `{}`\n  --> filename:{}:{}", self.token, self.row, self.col)
+        write!(f, "unexpected token: `{}` at {}:{}:{}", self.token.yellow().bold(), "filename.rs", self.row, self.col)
     }
 }
 
 impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CompilerError::Io(error) => write!(f, "\nerror: {}", error.to_string()),
-            CompilerError::Lexer(error)  => write!(f,"\nerror: {}", error.to_string()), 
-            CompilerError::Parser(error) => write!(f, "\nerror: {}", error.to_string()),
+            CompilerError::Io(error) => write!(f, "{}: {}", "error".red().bold(), error),
+            CompilerError::Lexer(error)  => write!(f, "{}: {}", "error".red().bold(), error), 
+            CompilerError::Parser(error) => write!(f, "{}: {}", "error".red().bold(), error),
         }
     }
 }
