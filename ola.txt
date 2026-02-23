@@ -1,2 +1,2 @@
 def main() 
-  square(2.2,2.1)
+  square(2.2,2)

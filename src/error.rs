@@ -10,12 +10,43 @@ pub enum CompilerError {
     Parser(ParseError<usize, Token, LexingError>),
 }
 
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Def => write!(f, "def"),
+            Token::Extern => write!(f, "extern"),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::Comma => write!(f, ","),
+            Token::GreaterEq => write!(f, ">="),
+            Token::LessEq => write!(f, "<="),
+            Token::Less => write!(f, "<"),
+            Token::Greater => write!(f, ">"),
+            Token::Equal => write!(f, "="),
+            Token::NotEqual => write!(f, "/="),
+            Token::Add => write!(f, "+"),
+            Token::Sub => write!(f, "-"),
+            Token::Div => write!(f, "/"),
+            Token::Mult => write!(f, "*"),
+            Token::Identifier(s) => write!(f, "{s}"),
+            Token::Number(n) => write!(f, "{n}"),
+            Token::Whitespace | Token::Newline => Ok(()),
+        }
+    }
+}
+
+impl fmt::Display for LexingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unexpected token: `{}`\n  --> filename:{}:{}", self.token, self.row, self.col)
+    }
+}
+
 impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CompilerError::Io(error) => write!(f, "IO Error: {error:?}"),
-            CompilerError::Lexer(error)  => write!(f, "Lexer Error: {error:?}"), 
-            CompilerError::Parser(error) => write!(f, "Parse Error: {error:?}"),
+            CompilerError::Io(error) => write!(f, "\nerror: {}", error.to_string()),
+            CompilerError::Lexer(error)  => write!(f,"\nerror: {}", error.to_string()), 
+            CompilerError::Parser(error) => write!(f, "\nerror: {}", error.to_string()),
         }
     }
 }
@@ -28,7 +59,10 @@ impl From<LexingError> for CompilerError {
 
 impl From<ParseError<usize, Token, LexingError>> for CompilerError {
     fn from(error: ParseError<usize, Token, LexingError>) -> Self {
-        CompilerError::Parser(error)
+        match error {
+            ParseError::User { error:e } => CompilerError::Lexer(e),
+            _                          => CompilerError::Parser(error),
+        }
     }
 }
 
