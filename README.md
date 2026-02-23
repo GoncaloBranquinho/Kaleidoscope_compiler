@@ -16,13 +16,13 @@ https://thedan64.github.io/inkwell/inkwell/index.html
 
 https://llvm.org/docs/Frontend/PerformanceTips.html
 
-** Lexer (Logos)
+## Lexer (Logos)
 
 https://docs.rs/logos/latest/logos/ 
 
 https://logos.maciej.codes/
 
-** Parser (lalrpop)
+## Parser (lalrpop)
 
 https://docs.rs/lalrpop/latest/lalrpop/
 
