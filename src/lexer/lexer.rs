@@ -1,37 +1,43 @@
-use logos::{Logos, SpannedIter};
+use logos::{Logos, Lexer as LogosLexer};
 
 use crate::lexer::tokens::{Token, LexingError};
 
 pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
 
 pub struct Lexer<'input> {
-    token_stream: SpannedIter<'input, Token>,
+    lexer: LogosLexer<'input, Token>,
     input: &'input str,
 }
 
 impl<'input> Lexer<'input> {
   pub fn new(input: &'input str) -> Self {
-    Self { token_stream: Token::lexer(input).spanned(), input, }
+    let mut lexer = Token::lexer(input);
+    lexer.extras = (1, 1);
+    Self { lexer, input, }
   }
-
 }
 
 impl<'input> Iterator for Lexer<'input> {
   type Item = Spanned<Token, usize, LexingError>;
 
   fn next(&mut self) -> Option<Self::Item> {
-      match self.token_stream.next() {
-          Some((Ok(token),span)) => {   
-            Some(Ok((span.start,token,span.end)))
+      let cur = self.lexer.next()?;
+      let span = self.lexer.span();
+      let size = span.end - span.start;
+      let row = self.lexer.extras.0;
+      let col = self.lexer.extras.1;
+      match cur {
+          Ok(token) => {
+            self.lexer.extras.1 += size;
+            Some(Ok((row,token,col)))
           }
-          Some((Err(_), span)) => {
+          Err(_) => {
             Some(Err(LexingError {
-                    token: self.input[span.start..span.end].to_string(),
-                    row: span.start,
-                    col: span.end,
-                }))
+                   token: self.input[span.start..span.end].to_string(),
+                   row: row,
+                   col: col,
+            }))
           }
-          None => None
       }
   }
 }

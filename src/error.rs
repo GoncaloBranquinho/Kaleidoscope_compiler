@@ -38,7 +38,7 @@ impl fmt::Display for Token {
 
 impl fmt::Display for LexingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unexpected token: `{}` at {}:{}:{}", self.token.yellow().bold(), "filename.rs", self.row, self.col)
+        write!(f, "Invalid token `{}` found at {}:{}", self.token, self.row, self.col)
     }
 }
 

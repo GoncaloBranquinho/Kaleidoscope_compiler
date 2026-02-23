@@ -60,10 +60,10 @@ pub enum Token {
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().unwrap())]
     Number(f64),
 
-    #[regex(r"[ \t]+", logos::skip)]
+    #[regex(r"[ \t]+", |lex| { lex.extras.1 += lex.slice().len(); logos::Skip })]
     Whitespace,
 
-    #[regex(r"\n", logos::skip)]
+    #[regex(r"\n", |lex| { lex.extras.0 += 1; lex.extras.1 = 1; logos::Skip })]
     Newline,
 }
 
