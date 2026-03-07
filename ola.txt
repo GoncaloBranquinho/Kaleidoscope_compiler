@@ -1,2 +1,5 @@
+def square(x,y) 
+    x+y
+
 def main()
     square(2.2, 2.2)

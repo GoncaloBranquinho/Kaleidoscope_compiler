@@ -13,7 +13,7 @@ impl<'input> Lexer<'input> {
   pub fn new(input: &'input str) -> Self {
     let mut lexer = Token::lexer(input);
     lexer.extras = (1, 1);
-    Self { lexer, input, }
+    Self { lexer, input }
   }
 }
 

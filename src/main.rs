@@ -1,8 +1,6 @@
 use std::env;
 use std::fs;
-use kaleidoscope_compiler::lexer::lexer::Lexer;
-use kaleidoscope_compiler::grammar::ProgramParser;
-use kaleidoscope_compiler::CompilerError;
+use kaleidoscope_compiler::{Lexer, CompilerError, ProgramParser};
 
 fn compile()  -> Result<(), CompilerError>{
     let args: Vec<String> = env::args().collect();

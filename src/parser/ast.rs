@@ -24,16 +24,10 @@ pub enum BinaryOp {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum UnaryOp {
- Aa,
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
   Var { name: String },
   DoubleLit { value: f64 },
   Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr>},
-  Unary { op: UnaryOp, expr: Box<Expr>},
   Call { name: String, args: Vec<Box<Expr>>},
 }
 
@@ -45,3 +39,4 @@ pub enum Statement {
     body: Box<Expr>,
   },
 }
+
