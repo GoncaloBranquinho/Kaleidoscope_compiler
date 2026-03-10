@@ -5,6 +5,12 @@ pub struct Arg {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Prototype {
+    pub name: String,
+    pub args: Vec<Arg>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     Double,
 }
@@ -14,13 +20,7 @@ pub enum BinaryOp {
     Add,
     Sub,
     Mult,
-    Div,
-    Eq,
-    Ne,
     Lt,
-    Le,
-    Gt,
-    Ge,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,11 +32,11 @@ pub enum Expr {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Statement {
-  FunctionDecl {
-    name: String,
-    args: Vec<Arg>,
+pub enum Decl {
+  Function {
+    proto: Prototype,
     body: Box<Expr>,
   },
+  Extern(Prototype),
 }
 

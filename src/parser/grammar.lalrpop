@@ -28,12 +28,13 @@ extern {
   }
 }
 
-pub Program: Vec<ast::Statement> = {
-  <stmts:Statement*> => stmts
+pub Program: Vec<ast::Decl> = {
+  <stmts:Decl*> => stmts
 }
 
-pub Statement: ast::Statement = {
-  "def" <name:"id"> "(" <args:ParamList> ")" <body:Expr> => ast::Statement::FunctionDecl {name, args, body}
+pub Decl: ast::Decl = {
+  "extern" <name:"id"> "(" <args:ParamList> ")"          => ast::Decl::Extern(ast::Prototype {name, args}),
+  "def" <name:"id"> "(" <args:ParamList> ")" <body:Expr> => ast::Decl::Function { proto: ast::Prototype { name, args }, body}
 }
 
 pub Expr: Box<ast::Expr> = {
@@ -41,12 +42,7 @@ pub Expr: Box<ast::Expr> = {
 }
 
 pub RelExpr: Box<ast::Expr> = {
-    <left:Tier1> "=" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Eq, left , right }),
-    <left:Tier1> "<" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Lt, left , right }),
-    <left:Tier1> "<=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Le, left , right }),
-    <left:Tier1> "/=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Ne, left , right }),
-    <left:Tier1> ">" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Gt, left , right }),
-    <left:Tier1> ">=" <right:Tier1> => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Ge, left , right }),
+    <left:Tier1> "<" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Lt, left , right }), 
     Tier1,
 }
 
@@ -89,7 +85,6 @@ Tier1_Op: ast::BinaryOp = {
 
 Tier2_Op: ast::BinaryOp = {
   "*" => ast::BinaryOp::Mult,
-  "/" => ast::BinaryOp::Div,
 }
 
 
