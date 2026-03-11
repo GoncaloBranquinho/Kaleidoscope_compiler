@@ -1,5 +1,6 @@
 use inkwell::context::Context;
-use kaleidoscope_compiler::{CodeGen, CodeGenBuilder, CompilerError, Lexer, ProgramParser};
+use kaleipl::{CodeGen, CodeGenBuilder, CompilerError, Lexer, ProgramParser};
+use owo_colors::OwoColorize;
 use std::io::{self, Write};
 
 fn compile(content: &str, codegen_builder: &mut CodeGenBuilder) -> Result<(), CompilerError> {
@@ -28,8 +29,10 @@ fn main() -> Result<(), CompilerError> {
     let context = Context::create();
     let mut codegen_builder = CodeGenBuilder::new(&context)?;
 
+    println!("Welcome to kaleipl. For help, type :help");
+
     loop {
-        print!("ready> ");
+        print!("{}", ">> ".yellow().bold());
         io::stdout().flush().unwrap();
         let mut input = String::new();
         let _ = io::stdin().read_line(&mut input)?;
