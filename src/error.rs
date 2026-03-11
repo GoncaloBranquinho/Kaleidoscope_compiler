@@ -1,14 +1,19 @@
-use lalrpop_util::ParseError;
-use crate::lexer::tokens::{Token, LexingError};
-use std::fmt;
-use owo_colors::OwoColorize;
+use crate::{
+    lexer::tokens::{LexingError, Token},
+    llvm::codegen::IRError,
+};
 
+use ::inkwell::support::LLVMString;
+use lalrpop_util::ParseError;
+use owo_colors::OwoColorize;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum CompilerError {
     Io(std::io::Error),
     Lexer(LexingError),
     Parser(ParseError<usize, Token, LexingError>),
+    Llvm(String),
 }
 
 impl fmt::Display for Token {
@@ -38,7 +43,11 @@ impl fmt::Display for Token {
 
 impl fmt::Display for LexingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid token `{}` found at {}:{}", self.token, self.row, self.col)
+        write!(
+            f,
+            "Invalid token `{}` found at {}:{}",
+            self.token, self.row, self.col
+        )
     }
 }
 
@@ -46,8 +55,9 @@ impl fmt::Display for CompilerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompilerError::Io(error) => write!(f, "{}: {}", "error".red().bold(), error),
-            CompilerError::Lexer(error)  => write!(f, "{}: {}", "error".red().bold(), error), 
+            CompilerError::Lexer(error) => write!(f, "{}: {}", "error".red().bold(), error),
             CompilerError::Parser(error) => write!(f, "{}: {}", "error".red().bold(), error),
+            CompilerError::Llvm(error) => write!(f, "{}: {}", "error".red().bold(), error),
         }
     }
 }
@@ -61,8 +71,8 @@ impl From<LexingError> for CompilerError {
 impl From<ParseError<usize, Token, LexingError>> for CompilerError {
     fn from(error: ParseError<usize, Token, LexingError>) -> Self {
         match error {
-            ParseError::User { error:e } => CompilerError::Lexer(e),
-            _                          => CompilerError::Parser(error),
+            ParseError::User { error: e } => CompilerError::Lexer(e),
+            _ => CompilerError::Parser(error),
         }
     }
 }
@@ -70,6 +80,18 @@ impl From<ParseError<usize, Token, LexingError>> for CompilerError {
 impl From<std::io::Error> for CompilerError {
     fn from(error: std::io::Error) -> Self {
         CompilerError::Io(error)
+    }
+}
+
+impl From<IRError> for CompilerError {
+    fn from(error: IRError) -> Self {
+        CompilerError::Llvm(error.message_error)
+    }
+}
+
+impl From<LLVMString> for CompilerError {
+    fn from(error: LLVMString) -> Self {
+        CompilerError::Llvm(error.to_string_lossy().to_string())
     }
 }
 

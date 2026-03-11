@@ -4,24 +4,23 @@ use inkwell::{
     FloatPredicate, OptimizationLevel,
     execution_engine::ExecutionEngine,
     module::Module,
+    support::LLVMString,
     types::BasicMetadataTypeEnum,
-    values::{FloatValue, FunctionValue},
+    values::{BasicMetadataValueEnum, CallSiteValue, FloatValue, FunctionValue},
 };
 
 use crate::parser::ast::{BinaryOp, Decl, Expr, Prototype};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct IRError<'ctx> {
-    message_error: String,
-    error: LlvmValue<'ctx>,
+pub struct IRError {
+    pub message_error: String,
 }
 
-impl From<BuilderError> for IRError<'_> {
+impl From<BuilderError> for IRError {
     fn from(error: BuilderError) -> Self {
         IRError {
             message_error: format!("LLVM builder error: {:?}", error),
-            error: LlvmValue::Void,
         }
     }
 }
@@ -30,7 +29,27 @@ impl From<BuilderError> for IRError<'_> {
 pub enum LlvmValue<'ctx> {
     Float(FloatValue<'ctx>),
     Function(FunctionValue<'ctx>),
+    Call(CallSiteValue<'ctx>),
     Void,
+}
+
+impl<'ctx> TryFrom<&LlvmValue<'ctx>> for BasicMetadataValueEnum<'ctx> {
+    type Error = IRError;
+
+    fn try_from(value: &LlvmValue<'ctx>) -> Result<Self, Self::Error> {
+        match value {
+            LlvmValue::Float(f) => Ok((*f).into()),
+            LlvmValue::Function(_) => Err(IRError {
+                message_error: "Cannot pass a function as a regular argument".to_string(),
+            }),
+            LlvmValue::Call(_) => Err(IRError {
+                message_error: "Cannot pass a call as a regular argument".to_string(),
+            }),
+            LlvmValue::Void => Err(IRError {
+                message_error: "Cannot pass void as argument".to_string(),
+            }),
+        }
+    }
 }
 
 pub struct CodeGenBuilder<'ctx> {
@@ -41,13 +60,13 @@ pub struct CodeGenBuilder<'ctx> {
     pub map: HashMap<String, LlvmValue<'ctx>>,
 }
 
-trait CodeGen<'ctx> {
-    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>)
-    -> Result<LlvmValue<'ctx>, IRError<'ctx>>;
+#[allow(dead_code)]
+pub trait CodeGen<'ctx> {
+    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError>;
 }
 
 impl<'ctx> CodeGenBuilder<'ctx> {
-    pub fn new(ctx: &'ctx Context) -> Result<CodeGenBuilder<'ctx>, Box<dyn std::error::Error>> {
+    pub fn new(ctx: &'ctx Context) -> Result<CodeGenBuilder<'ctx>, LLVMString> {
         let module = ctx.create_module("main");
         let builder = ctx.create_builder();
         let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None)?;
@@ -64,10 +83,7 @@ impl<'ctx> CodeGenBuilder<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> for Expr {
-    fn codegen(
-        &self,
-        context: &mut CodeGenBuilder<'ctx>,
-    ) -> Result<LlvmValue<'ctx>, IRError<'ctx>> {
+    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
         match self {
             Expr::DoubleLit { value } => {
                 let f64_type = context.ctx.f64_type();
@@ -79,8 +95,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     Ok(value.clone())
                 } else {
                     Err(IRError {
-                        message_error: "Unknown variable name: {name}".to_string(),
-                        error: LlvmValue::Void,
+                        message_error: format!("Unknown variable name: {}", name),
                     })
                 }
             }
@@ -120,39 +135,37 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     }
                     _ => Err(IRError {
                         message_error: "Expression must be of float type".to_string(),
-                        error: LlvmValue::Void,
                     }),
                 }
             }
             Expr::Call { name, args } => {
                 let callee = context.module.get_function(name).ok_or(IRError {
                     message_error: "Unknown function referenced".to_string(),
-                    error: LlvmValue::Void,
                 })?;
                 if args.len() != callee.count_params() as usize {
                     return Err(IRError {
                         message_error: "Incorrect # arguments passed".to_string(),
-                        error: LlvmValue::Function(callee),
                     });
                 }
-                let mut vec = Vec::new();
+                let mut vec: Vec<BasicMetadataValueEnum> = Vec::new();
                 let tmp = 0..args.len();
                 for i in tmp {
-                    vec.push(args[i].codegen(context)?);
+                    let arg_eval = args[i].codegen(context)?;
+                    vec.push(TryFrom::try_from(&arg_eval)?);
                 }
 
-                //context.builder.build_call(callee, vec, "calltmp")
-                Ok(LlvmValue::Void)
+                let call = context.builder.build_call(callee, &vec, "calltmp");
+                match call {
+                    Ok(v) => Ok(LlvmValue::Call(v)),
+                    Err(e) => Err(e.into()),
+                }
             }
         }
     }
 }
 
 impl<'ctx> CodeGen<'ctx> for Prototype {
-    fn codegen(
-        &self,
-        context: &mut CodeGenBuilder<'ctx>,
-    ) -> Result<LlvmValue<'ctx>, IRError<'ctx>> {
+    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
         let f64_type = context.ctx.f64_type();
         let args_type: Vec<BasicMetadataTypeEnum> = vec![f64_type.into(); self.args.len()];
         let fn_type = f64_type.fn_type(&args_type, false);
@@ -167,10 +180,7 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
 }
 
 impl<'ctx> CodeGen<'ctx> for Decl {
-    fn codegen(
-        &self,
-        context: &mut CodeGenBuilder<'ctx>,
-    ) -> Result<LlvmValue<'ctx>, IRError<'ctx>> {
+    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
         match self {
             Decl::Extern(proto) => proto.codegen(context),
 
@@ -182,7 +192,6 @@ impl<'ctx> CodeGen<'ctx> for Decl {
                         _ => {
                             return Err(IRError {
                                 message_error: "Function LlvmValue expected".to_string(),
-                                error: LlvmValue::Void,
                             });
                         }
                     },
@@ -191,7 +200,6 @@ impl<'ctx> CodeGen<'ctx> for Decl {
                 if fn_value.get_first_basic_block().is_some() {
                     return Err(IRError {
                         message_error: "Function cannot be redefnied".to_string(),
-                        error: LlvmValue::Function(fn_value),
                     });
                 }
 
@@ -200,9 +208,9 @@ impl<'ctx> CodeGen<'ctx> for Decl {
                 context.builder.position_at_end(basic_block);
                 context.map.clear();
 
-                for (i, arg) in fn_value.get_param_iter().enumerate() {
+                for arg in fn_value.get_param_iter() {
                     context.map.insert(
-                        proto.args[i].name.clone(),
+                        arg.get_name().to_string_lossy().to_string(),
                         LlvmValue::Float(arg.into_float_value()),
                     );
                 }

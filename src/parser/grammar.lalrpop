@@ -29,7 +29,8 @@ extern {
 }
 
 pub Program: Vec<ast::Decl> = {
-  <stmts:Decl*> => stmts
+  <stmts:Decl*> => stmts,
+  <expr:Expr>   => vec![ast::Decl::Function { proto: ast::Prototype {name: "__anon_expr".to_string(), args: Vec::new() }, body: expr}],
 }
 
 pub Decl: ast::Decl = {
