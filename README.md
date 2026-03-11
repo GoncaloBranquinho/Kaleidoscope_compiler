@@ -1,7 +1,5 @@
 # Kaleidoscope_compiler
 
-Currently studying the LLVM IR and Inkwell crate in order to generate LLVM IR from the AST
-
 References:
 
 https://doc.rust-lang.org/stable/book/title-page.html
