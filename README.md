@@ -29,3 +29,5 @@ https://docs.rs/lalrpop/latest/lalrpop/
 https://lalrpop.github.io/lalrpop/
 
 LibFuzzer
+
+Legacy PM vs New PM - https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/
