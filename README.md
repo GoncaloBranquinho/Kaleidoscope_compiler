@@ -31,3 +31,7 @@ https://lalrpop.github.io/lalrpop/
 LibFuzzer
 
 Legacy PM vs New PM - https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/
+
+https://llvm.org/docs/ORCv2.html#lljit-and-lllazyjit
+
+https://docs.rs/llvm-sys/221.0.0/llvm_sys/
