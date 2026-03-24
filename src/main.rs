@@ -1,20 +1,34 @@
 use inkwell::context::Context;
-use kaleipl::{CodeGen, CodeGenBuilder, CompilerError, Lexer, ProgramParser};
+use kaleipl::{
+    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, Lexer, LlvmValue,
+    ProgramParser,
+};
+use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
 use std::io::{self, Write};
 
-fn compile(content: &str, codegen_builder: &mut CodeGenBuilder) -> Result<(), CompilerError> {
+pub fn compile(
+    content: &str,
+    codegen_builder: &mut CodeGenBuilder,
+    jit: &mut KaleidoscopeJIT,
+) -> Result<(), CompilerError> {
     let lexer = Lexer::new(content);
     let parser = ProgramParser::new();
     let ast = parser.parse(lexer)?;
     println!("{:?}", ast);
 
     for decl in ast.iter() {
-        decl.codegen(codegen_builder)?;
+        let decl_ir = decl.codegen(codegen_builder)?;
+        if let LlvmValue::Function(fn_value) = decl_ir {
+            fn_value.print_to_stderr();
+        }
+        let rt = decl.compile(codegen_builder, jit);
+        if let Some(rt) = rt {
+            decl.run(rt, jit);
+        }
     }
 
-    println!("{}", codegen_builder.module.to_string());
-
+    /*
     // Delete the anonymous function created to evaluate the top-level expression,
     // so future top-level expressions don't trigger a "Function cannot be redefined" error.
     if let Some(f) = codegen_builder.module.get_function("__anon_expr") {
@@ -22,12 +36,18 @@ fn compile(content: &str, codegen_builder: &mut CodeGenBuilder) -> Result<(), Co
             f.delete();
         }
     }
+    */
     Ok(())
 }
 
 fn main() -> Result<(), CompilerError> {
-    let context = Context::create();
-    let mut codegen_builder = CodeGenBuilder::new(&context)?;
+    let (tsc, context) = unsafe {
+        let tsc = LLVMOrcCreateNewThreadSafeContext();
+        (tsc, Context::new(LLVMOrcThreadSafeContextGetContext(tsc)))
+    };
+    let mut codegen_builder = CodeGenBuilder::new(&context, &tsc)?;
+
+    let mut jit = KaleidoscopeJIT::new().unwrap();
 
     println!("Welcome to kaleipl. For help, type :help");
 
@@ -36,8 +56,10 @@ fn main() -> Result<(), CompilerError> {
         io::stdout().flush().unwrap();
         let mut input = String::new();
         let _ = io::stdin().read_line(&mut input)?;
-        if let Err(error) = compile(&input, &mut codegen_builder) {
+        if let Err(error) = compile(&input, &mut codegen_builder, &mut jit) {
             eprintln!("{error}");
         }
     }
 }
+
+//separar jit e codegenbuilder. Para poder resetar

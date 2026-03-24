@@ -1,30 +1,28 @@
-use logos::{Logos};
+use logos::Logos;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LexingError {
     pub token: String,
     pub row: usize,
-    pub col: usize, 
+    pub col: usize,
 }
 
 #[derive(Debug)]
 pub struct TokenInfo {
-   pub token: Token,
-   pub row: usize,
-   pub col: usize,
+    pub token: Token,
+    pub row: usize,
+    pub col: usize,
 }
-
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos( extras = (usize, usize))]
 pub enum Token {
-    
     #[token("def")]
     Def,
-    
+
     #[token("extern")]
     Extern,
-    
+
     #[token("(")]
     LParen,
     #[token(")")]
@@ -54,10 +52,10 @@ pub enum Token {
     #[token("*")]
     Mult,
 
-    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice().to_string())]    
+    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice().to_string())]
     Identifier(String),
-    
-    #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().unwrap())]
+
+    #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse::<f64>().unwrap())]
     Number(f64),
 
     #[regex(r"[ \t]+", |lex| { lex.extras.1 += lex.slice().len(); logos::Skip })]
@@ -66,4 +64,3 @@ pub enum Token {
     #[regex(r"\n", |lex| { lex.extras.0 += 1; lex.extras.1 = 1; logos::Skip })]
     Newline,
 }
-

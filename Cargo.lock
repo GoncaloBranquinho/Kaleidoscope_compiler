@@ -221,6 +221,7 @@ dependencies = [
  "inkwell",
  "lalrpop",
  "lalrpop-util",
+ "llvm-sys",
  "logos",
  "owo-colors",
 ]
