@@ -35,3 +35,5 @@ Legacy PM vs New PM - https://blog.llvm.org/posts/2021-03-26-the-new-pass-manage
 https://llvm.org/docs/ORCv2.html#lljit-and-lllazyjit
 
 https://docs.rs/llvm-sys/221.0.0/llvm_sys/
+
+https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/
