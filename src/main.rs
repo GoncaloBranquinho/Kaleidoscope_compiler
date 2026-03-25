@@ -22,10 +22,7 @@ pub fn compile(
         if let LlvmValue::Function(fn_value) = decl_ir {
             fn_value.print_to_stderr();
         }
-        let rt = decl.compile(codegen_builder, jit);
-        if let Some(rt) = rt {
-            decl.run(rt, jit);
-        }
+        decl.compile(codegen_builder, jit)?;
     }
 
     /*

@@ -1,14 +1,15 @@
-use inkwell::builder::{Builder, BuilderError};
+use std::collections::HashMap;
+use std::ffi::CString;
+use std::mem::{forget, replace, transmute};
+
+use inkwell::builder::Builder;
 use inkwell::context::Context;
+use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
-use inkwell::{
-    FloatPredicate, OptimizationLevel,
-    module::Module,
-    passes::PassBuilderOptions,
-    support::LLVMString,
-    types::BasicMetadataTypeEnum,
-    values::{BasicMetadataValueEnum, CallSiteValue, FloatValue, FunctionValue},
-};
+use inkwell::types::BasicMetadataTypeEnum;
+use inkwell::values::{BasicMetadataValueEnum, CallSiteValue, FloatValue, FunctionValue};
+use inkwell::{FloatPredicate, OptimizationLevel};
 use llvm_sys::error::LLVMErrorRef;
 use llvm_sys::orc2::lljit::{
     LLVMOrcCreateLLJIT, LLVMOrcCreateLLJITBuilder, LLVMOrcLLJITAddLLVMIRModuleWithRT,
@@ -20,15 +21,13 @@ use llvm_sys::orc2::{
     LLVMOrcResourceTrackerRemove, LLVMOrcThreadSafeContextRef, LLVMOrcThreadSafeModuleRef,
 };
 
+use crate::error::CompilerError;
 use crate::parser::ast::{BinaryOp, Decl, Expr, Prototype};
-use std::collections::HashMap;
-use std::ffi::CString;
-use std::mem::{forget, replace, transmute};
 
 fn get_function<'ctx>(
     name: &str,
     context: &mut CodeGenBuilder<'ctx>,
-) -> Result<FunctionValue<'ctx>, IRError> {
+) -> Result<FunctionValue<'ctx>, CompilerError> {
     if let Some(callee) = context.module.get_function(name) {
         return Ok(callee);
     }
@@ -41,22 +40,9 @@ fn get_function<'ctx>(
         };
     }
 
-    Err(IRError {
-        message_error: "Unknown function referenced".to_string(),
-    })
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct IRError {
-    pub message_error: String,
-}
-
-impl From<BuilderError> for IRError {
-    fn from(error: BuilderError) -> Self {
-        IRError {
-            message_error: format!("LLVM builder error: {:?}", error),
-        }
-    }
+    Err(CompilerError::Llvm(
+        "Unknown function referenced".to_string(),
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,20 +54,20 @@ pub enum LlvmValue<'ctx> {
 }
 
 impl<'ctx> TryFrom<&LlvmValue<'ctx>> for BasicMetadataValueEnum<'ctx> {
-    type Error = IRError;
+    type Error = CompilerError;
 
     fn try_from(value: &LlvmValue<'ctx>) -> Result<Self, Self::Error> {
         match value {
             LlvmValue::Float(f) => Ok((*f).into()),
-            LlvmValue::Function(_) => Err(IRError {
-                message_error: "Cannot pass a function as a regular argument".to_string(),
-            }),
-            LlvmValue::Call(_) => Err(IRError {
-                message_error: "Cannot pass a call as a regular argument".to_string(),
-            }),
-            LlvmValue::Void => Err(IRError {
-                message_error: "Cannot pass void as argument".to_string(),
-            }),
+            LlvmValue::Function(_) => Err(CompilerError::Llvm(
+                "Cannot pass a function as a regular argument".to_string(),
+            )),
+            LlvmValue::Call(_) => Err(CompilerError::Llvm(
+                "Cannot pass a call as a regular argument".to_string(),
+            )),
+            LlvmValue::Void => Err(CompilerError::Llvm(
+                "Cannot pass void as argument".to_string(),
+            )),
         }
     }
 }
@@ -108,22 +94,28 @@ impl KaleidoscopeJIT {
         &self,
         tsm: LLVMOrcThreadSafeModuleRef,
         rt: LLVMOrcResourceTrackerRef,
-    ) -> Result<(), LLVMErrorRef> {
+    ) -> Result<(), CompilerError> {
         unsafe {
             let err = LLVMOrcLLJITAddLLVMIRModuleWithRT(self.lljit, rt, tsm);
-            if !err.is_null() { Err(err) } else { Ok(()) }
+            if !err.is_null() {
+                Err(err.into())
+            } else {
+                Ok(())
+            }
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Result<LLVMOrcExecutorAddress, LLVMErrorRef> {
+    pub fn lookup(&self, name: &str) -> Result<LLVMOrcExecutorAddress, CompilerError> {
         unsafe {
             let mut result: LLVMOrcExecutorAddress = 0;
 
-            let cname = CString::new(name).unwrap();
+            let cname = CString::new(name).map_err(|_| {
+                CompilerError::Llvm("Function name contains a null byte".to_string())
+            })?;
 
             let err = LLVMOrcLLJITLookup(self.lljit, &mut result, cname.as_ptr());
             if !err.is_null() {
-                return Err(err);
+                return Err(err.into());
             }
             Ok(result)
         }
@@ -136,10 +128,14 @@ impl KaleidoscopeJIT {
         }
     }
 
-    pub fn remove(&self, rt: LLVMOrcResourceTrackerRef) -> Result<(), LLVMErrorRef> {
+    pub fn remove(&self, rt: LLVMOrcResourceTrackerRef) -> Result<(), CompilerError> {
         unsafe {
             let err = LLVMOrcResourceTrackerRemove(rt);
-            if !err.is_null() { Err(err) } else { Ok(()) }
+            if !err.is_null() {
+                Err(err.into())
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -155,14 +151,15 @@ pub struct CodeGenBuilder<'ctx> {
 }
 
 pub trait CodeGen<'ctx> {
-    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError>;
+    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>)
+    -> Result<LlvmValue<'ctx>, CompilerError>;
 }
 
 impl<'ctx> CodeGenBuilder<'ctx> {
     pub fn new(
         ctx: &'ctx Context,
         tsc: &'ctx LLVMOrcThreadSafeContextRef,
-    ) -> Result<CodeGenBuilder<'ctx>, LLVMString> {
+    ) -> Result<CodeGenBuilder<'ctx>, CompilerError> {
         let module: Module = ctx.create_module("main");
 
         let _ = Target::initialize_native(&InitializationConfig {
@@ -176,7 +173,7 @@ impl<'ctx> CodeGenBuilder<'ctx> {
 
         let triple = TargetMachine::get_default_triple();
 
-        let target = Target::from_triple(&triple)?;
+        let target = Target::from_triple(&triple).map_err(CompilerError::from)?;
 
         let target_machine = target
             .create_target_machine(
@@ -187,7 +184,7 @@ impl<'ctx> CodeGenBuilder<'ctx> {
                 RelocMode::Default,
                 CodeModel::Default,
             )
-            .unwrap();
+            .ok_or_else(|| CompilerError::Llvm("Unable to create a target machine".to_string()))?;
 
         let builder = ctx.create_builder();
         let map = HashMap::new();
@@ -206,7 +203,10 @@ impl<'ctx> CodeGenBuilder<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> for Expr {
-    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
+    fn codegen(
+        &self,
+        context: &mut CodeGenBuilder<'ctx>,
+    ) -> Result<LlvmValue<'ctx>, CompilerError> {
         match self {
             Expr::DoubleLit { value } => {
                 let f64_type = context.ctx.f64_type();
@@ -217,9 +217,10 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 if let Some(value) = context.map.get(name) {
                     Ok(value.clone())
                 } else {
-                    Err(IRError {
-                        message_error: format!("Unknown variable name: {}", name),
-                    })
+                    Err(CompilerError::Llvm(format!(
+                        "Unknown variable name: {}",
+                        name
+                    )))
                 }
             }
 
@@ -256,17 +257,17 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         };
                         Ok(LlvmValue::Float(res?))
                     }
-                    _ => Err(IRError {
-                        message_error: "Expression must be of float type".to_string(),
-                    }),
+                    _ => Err(CompilerError::Llvm(
+                        "Expression must be of float type".to_string(),
+                    )),
                 }
             }
             Expr::Call { name, args } => {
                 let callee = get_function(name, context)?;
                 if args.len() != callee.count_params() as usize {
-                    return Err(IRError {
-                        message_error: "Incorrect # arguments passed".to_string(),
-                    });
+                    return Err(CompilerError::Llvm(
+                        "Incorrect # arguments passed".to_string(),
+                    ));
                 }
                 let mut vec: Vec<BasicMetadataValueEnum> = Vec::new();
                 let tmp = 0..args.len();
@@ -278,9 +279,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let call = context.builder.build_call(callee, &vec, "calltmp");
                 match call {
                     Ok(v) => {
-                        let value = v.try_as_basic_value().basic().ok_or(IRError {
-                            message_error: "Expected function to return a value".to_string(),
-                        })?;
+                        let value = v.try_as_basic_value().basic().ok_or(CompilerError::Llvm(
+                            "Expected function to return a value".to_string(),
+                        ))?;
                         Ok(LlvmValue::Float(value.into_float_value()))
                     }
                     Err(e) => Err(e.into()),
@@ -291,15 +292,18 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 }
 
 impl<'ctx> CodeGen<'ctx> for Prototype {
-    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
+    fn codegen(
+        &self,
+        context: &mut CodeGenBuilder<'ctx>,
+    ) -> Result<LlvmValue<'ctx>, CompilerError> {
         let f64_type = context.ctx.f64_type();
         let args_type: Vec<BasicMetadataTypeEnum> = vec![f64_type.into(); self.args.len()];
         let fn_type = f64_type.fn_type(&args_type, false);
 
         if context.module.get_function(&self.name).is_some() {
-            return Err(IRError {
-                message_error: "Function cannot have multiple declarations".to_string(),
-            });
+            return Err(CompilerError::Llvm(
+                "Function cannot have multiple declarations".to_string(),
+            ));
         }
 
         let fn_value = context.module.add_function(&self.name, fn_type, None);
@@ -313,7 +317,10 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
 }
 
 impl<'ctx> CodeGen<'ctx> for Decl {
-    fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<LlvmValue<'ctx>, IRError> {
+    fn codegen(
+        &self,
+        context: &mut CodeGenBuilder<'ctx>,
+    ) -> Result<LlvmValue<'ctx>, CompilerError> {
         match self {
             Decl::Extern(proto) => proto.codegen(context),
 
@@ -324,9 +331,9 @@ impl<'ctx> CodeGen<'ctx> for Decl {
 
                 let fn_value = get_function(&proto.name, context)?;
                 if fn_value.get_first_basic_block().is_some() {
-                    return Err(IRError {
-                        message_error: "Function cannot be redefnied".to_string(),
-                    });
+                    return Err(CompilerError::Llvm(
+                        "Function cannot be redefnied".to_string(),
+                    ));
                 }
 
                 let basic_block = context.ctx.append_basic_block(fn_value, "entry");
@@ -335,9 +342,9 @@ impl<'ctx> CodeGen<'ctx> for Decl {
                 context.map.clear();
 
                 if proto.args.len() != fn_value.count_params() as usize {
-                    return Err(IRError {
-                        message_error: "Incorrect # arguments passed".to_string(),
-                    });
+                    return Err(CompilerError::Llvm(
+                        "Incorrect # arguments passed".to_string(),
+                    ));
                 }
 
                 for (i, arg) in fn_value.get_param_iter().enumerate() {
@@ -376,14 +383,12 @@ impl<'ctx> CodeGen<'ctx> for Decl {
 
                 let options = PassBuilderOptions::create();
 
-                if let Err(e) = context.module.run_passes(
-                    "function(instcombine,reassociate,gvn,simplifycfg)",
+                if let Err(e) = fn_value.run_passes(
+                    "instcombine,reassociate,gvn,simplifycfg",
                     &context.target_machine,
                     options,
                 ) {
-                    return Err(IRError {
-                        message_error: e.to_string_lossy().to_string(),
-                    });
+                    return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
                 }
 
                 Ok(LlvmValue::Function(fn_value))
@@ -397,9 +402,13 @@ pub trait JitCompiler<'ctx> {
         &self,
         codegen_builder: &mut CodeGenBuilder<'ctx>,
         jit: &mut KaleidoscopeJIT,
-    ) -> Option<LLVMOrcResourceTrackerRef>;
+    ) -> Result<(), CompilerError>;
 
-    fn run(&self, rt: LLVMOrcResourceTrackerRef, jit: &mut KaleidoscopeJIT);
+    fn run(
+        &self,
+        rt: LLVMOrcResourceTrackerRef,
+        jit: &mut KaleidoscopeJIT,
+    ) -> Result<(), CompilerError>;
 }
 
 impl<'ctx> JitCompiler<'ctx> for Decl {
@@ -407,13 +416,13 @@ impl<'ctx> JitCompiler<'ctx> for Decl {
         &self,
         codegen_builder: &mut CodeGenBuilder<'ctx>,
         jit: &mut KaleidoscopeJIT,
-    ) -> Option<LLVMOrcResourceTrackerRef> {
+    ) -> Result<(), CompilerError> {
         match self {
             Decl::Extern(proto) => {
                 codegen_builder
                     .function_protos
                     .insert(proto.name.clone(), proto.clone());
-                None
+                Ok(())
             }
 
             Decl::Function { proto, body: _ } => {
@@ -433,8 +442,8 @@ impl<'ctx> JitCompiler<'ctx> for Decl {
                         codegen_builder.builder = codegen_builder.ctx.create_builder();
 
                         let tsm = LLVMOrcCreateNewThreadSafeModule(ptr, *codegen_builder.tsc);
-                        jit.add_module(tsm, rt).unwrap();
-                        Some(rt)
+                        jit.add_module(tsm, rt)?;
+                        self.run(rt, jit)
                     }
                 } else {
                     unsafe {
@@ -452,24 +461,27 @@ impl<'ctx> JitCompiler<'ctx> for Decl {
                         codegen_builder.builder = codegen_builder.ctx.create_builder();
 
                         let tsm = LLVMOrcCreateNewThreadSafeModule(ptr, *codegen_builder.tsc);
-                        jit.add_module(tsm, rt).unwrap();
-                        None
+                        jit.add_module(tsm, rt)?;
+                        Ok(())
                     }
                 }
             }
         }
     }
 
-    fn run(&self, rt: LLVMOrcResourceTrackerRef, jit: &mut KaleidoscopeJIT) {
+    fn run(
+        &self,
+        rt: LLVMOrcResourceTrackerRef,
+        jit: &mut KaleidoscopeJIT,
+    ) -> Result<(), CompilerError> {
         match self {
-            Decl::Extern(_proto) => {}
-
             Decl::Function { .. } => {
-                let executer_addr = jit.lookup("__anon_expr").unwrap();
+                let executer_addr = jit.lookup("__anon_expr")?;
                 let res = jit.call(executer_addr);
                 println!("Evaluated to {res}");
-                jit.remove(rt).unwrap();
+                jit.remove(rt)
             }
+            _ => Ok(()),
         }
     }
 }

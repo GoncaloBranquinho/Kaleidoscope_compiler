@@ -1,12 +1,11 @@
-use crate::{
-    lexer::tokens::{LexingError, Token},
-    llvm::codegen::IRError,
-};
+use crate::lexer::tokens::{LexingError, Token};
 
 use ::inkwell::support::LLVMString;
+use inkwell::builder::BuilderError;
 use lalrpop_util::ParseError;
+use llvm_sys::error::{LLVMErrorRef, LLVMGetErrorMessage};
 use owo_colors::OwoColorize;
-use std::fmt;
+use std::{ffi::CStr, fmt};
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -83,15 +82,25 @@ impl From<std::io::Error> for CompilerError {
     }
 }
 
-impl From<IRError> for CompilerError {
-    fn from(error: IRError) -> Self {
-        CompilerError::Llvm(error.message_error)
-    }
-}
-
 impl From<LLVMString> for CompilerError {
     fn from(error: LLVMString) -> Self {
         CompilerError::Llvm(error.to_string_lossy().to_string())
+    }
+}
+
+impl From<BuilderError> for CompilerError {
+    fn from(error: BuilderError) -> Self {
+        CompilerError::Llvm(format!("LLVM builder error: {:?}", error))
+    }
+}
+
+impl From<LLVMErrorRef> for CompilerError {
+    fn from(err: LLVMErrorRef) -> Self {
+        unsafe {
+            let message = LLVMGetErrorMessage(err);
+            let e = CStr::from_ptr(message).to_string_lossy().into_owned();
+            CompilerError::Llvm(e)
+        }
     }
 }
 
