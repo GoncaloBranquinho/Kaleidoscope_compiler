@@ -1,3 +1,5 @@
+use std::fmt;
+
 use logos::Logos;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,4 +65,39 @@ pub enum Token {
 
     #[regex(r"\n", |lex| { lex.extras.0 += 1; lex.extras.1 = 1; logos::Skip })]
     Newline,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Def => write!(f, "def"),
+            Token::Extern => write!(f, "extern"),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::Comma => write!(f, ","),
+            Token::GreaterEq => write!(f, ">="),
+            Token::LessEq => write!(f, "<="),
+            Token::Less => write!(f, "<"),
+            Token::Greater => write!(f, ">"),
+            Token::Equal => write!(f, "="),
+            Token::NotEqual => write!(f, "/="),
+            Token::Add => write!(f, "+"),
+            Token::Sub => write!(f, "-"),
+            Token::Div => write!(f, "/"),
+            Token::Mult => write!(f, "*"),
+            Token::Identifier(s) => write!(f, "{s}"),
+            Token::Number(n) => write!(f, "{n}"),
+            Token::Whitespace | Token::Newline => Ok(()),
+        }
+    }
+}
+
+impl fmt::Display for LexingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Invalid token `{}` found at {}:{}",
+            self.token, self.row, self.col
+        )
+    }
 }
