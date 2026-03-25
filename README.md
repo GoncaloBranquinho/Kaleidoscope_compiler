@@ -4,6 +4,14 @@ References:
 
 https://doc.rust-lang.org/stable/book/title-page.html
 
+Legacy PM vs New PM - https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/
+
+https://llvm.org/docs/ORCv2.html#lljit-and-lllazyjit
+
+https://docs.rs/llvm-sys/221.0.0/llvm_sys/
+
+https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/
+
 https://aosabook.org/en/v1/llvm.html#footnote-1
 
 https://brson.github.io/2023/03/12/move-on-llvm/
@@ -28,12 +36,4 @@ https://docs.rs/lalrpop/latest/lalrpop/
 
 https://lalrpop.github.io/lalrpop/
 
-LibFuzzer
 
-Legacy PM vs New PM - https://blog.llvm.org/posts/2021-03-26-the-new-pass-manager/
-
-https://llvm.org/docs/ORCv2.html#lljit-and-lllazyjit
-
-https://docs.rs/llvm-sys/221.0.0/llvm_sys/
-
-https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/
