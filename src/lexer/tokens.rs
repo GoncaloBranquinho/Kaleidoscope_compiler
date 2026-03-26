@@ -21,9 +21,18 @@ pub struct TokenInfo {
 pub enum Token {
     #[token("def")]
     Def,
-
     #[token("extern")]
     Extern,
+    #[token("if")]
+    If,
+    #[token("then")]
+    Then,
+    #[token("else")]
+    Else,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
 
     #[token("(")]
     LParen,
@@ -31,6 +40,8 @@ pub enum Token {
     RParen,
     #[token(",")]
     Comma,
+    #[token(";")]
+    Semicolon,
 
     #[token(">=")]
     GreaterEq,
@@ -72,9 +83,15 @@ impl fmt::Display for Token {
         match self {
             Token::Def => write!(f, "def"),
             Token::Extern => write!(f, "extern"),
+            Token::If => write!(f, "if"),
+            Token::Then => write!(f, "then"),
+            Token::Else => write!(f, "else"),
+            Token::For => write!(f, "for"),
+            Token::In => write!(f, "in"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::Comma => write!(f, ","),
+            Token::Semicolon => write!(f, ";"),
             Token::GreaterEq => write!(f, ">="),
             Token::LessEq => write!(f, "<="),
             Token::Less => write!(f, "<"),

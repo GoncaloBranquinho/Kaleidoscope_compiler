@@ -5,5 +5,5 @@ pub mod parser;
 
 pub use error::CompilerError;
 pub use lexer::Lexer;
-pub use llvm::{CodeGen, CodeGenBuilder, JitCompiler, KaleidoscopeJIT, LlvmValue};
+pub use llvm::{CodeGen, CodeGenBuilder, JitCompiler, KaleidoscopeJIT};
 pub use parser::ProgramParser;

@@ -10,6 +10,11 @@ extern {
   enum Token {
     "def"      => Token::Def,
     "extern"   => Token::Extern,
+    "if"       => Token::If,
+    "then"     => Token::Then,
+    "else"     => Token::Else,
+    "for"      => Token::For,
+    "in"       => Token::In,
     "id"       => Token::Identifier(<String>),
     "lit_d"    => Token::Number(<f64>),
     "("        => Token::LParen,
@@ -25,22 +30,30 @@ extern {
     "="        => Token::Equal,
     "/="       => Token::NotEqual,
     ","        => Token::Comma,
+    ";"        => Token::Semicolon,
   }
 }
 
 pub Program: Vec<ast::Decl> = {
-  <stmts:Decl*> => stmts,
-  <expr:Expr>   => vec![ast::Decl::Function { proto: ast::Prototype {name: "__anon_expr".to_string(), args: Vec::new() }, body: expr}],
+  <stmts:Decl*>   => stmts,
+  <expr:Expr> => vec![ast::Decl::Function { proto: ast::Prototype {name: "__anon_expr".to_string(), args: Vec::new() }, body: expr}],
 }
 
 pub Decl: ast::Decl = {
-  "extern" <name:"id"> "(" <args:ParamList> ")"          => ast::Decl::Extern(ast::Prototype {name, args}),
+  "extern" <name:"id"> "(" <args:ParamList> ")"      => ast::Decl::Extern(ast::Prototype {name, args}),
   "def" <name:"id"> "(" <args:ParamList> ")" <body:Expr> => ast::Decl::Function { proto: ast::Prototype { name, args }, body}
+
 }
 
 pub Expr: Box<ast::Expr> = {
-  RelExpr,
+  ControlExpr,
 }
+
+pub ControlExpr: Box<ast::Expr> = {
+   "if" <cond:Expr> "then" <fst:Expr> "else" <snd:Expr> => Box::new(ast::Expr::IfThenElse {cond, fst, snd}),
+   "for" <var_name:"id"> "=" <start:Expr> "," <end:Expr> "," <step:Expr> "in" <body:Expr> => Box::new(ast::Expr::ForLoop {var_name, start, end, step, body}),   
+   RelExpr,
+};
 
 pub RelExpr: Box<ast::Expr> = {
     <left:Tier1> "<" <right:Tier1>  => Box::new(ast::Expr::Binary {op: ast::BinaryOp::Lt, left , right }), 

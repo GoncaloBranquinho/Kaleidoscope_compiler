@@ -39,8 +39,3 @@ impl<'input> Iterator for Lexer<'input> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

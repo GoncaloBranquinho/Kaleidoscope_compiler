@@ -1,7 +1,6 @@
 use inkwell::context::Context;
 use kaleipl::{
-    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, Lexer, LlvmValue,
-    ProgramParser,
+    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, Lexer, ProgramParser,
 };
 use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
@@ -18,10 +17,8 @@ pub fn compile(
     println!("{:?}", ast);
 
     for decl in ast.iter() {
-        let decl_ir = decl.codegen(codegen_builder)?;
-        if let LlvmValue::Function(fn_value) = decl_ir {
-            fn_value.print_to_stderr();
-        }
+        let fn_value = decl.codegen(codegen_builder)?;
+        fn_value.print_to_stderr();
         decl.compile(codegen_builder, jit)?;
     }
 

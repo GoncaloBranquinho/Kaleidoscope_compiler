@@ -25,18 +25,37 @@ pub enum BinaryOp {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr {
-  Var { name: String },
-  DoubleLit { value: f64 },
-  Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr>},
-  Call { name: String, args: Vec<Box<Expr>>},
+    Var {
+        name: String,
+    },
+    DoubleLit {
+        value: f64,
+    },
+    Binary {
+        op: BinaryOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    IfThenElse {
+        cond: Box<Expr>,
+        fst: Box<Expr>,
+        snd: Box<Expr>,
+    },
+    Call {
+        name: String,
+        args: Vec<Box<Expr>>,
+    },
+    ForLoop {
+        var_name: String,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        step: Box<Expr>,
+        body: Box<Expr>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Decl {
-  Function {
-    proto: Prototype,
-    body: Box<Expr>,
-  },
-  Extern(Prototype),
+    Function { proto: Prototype, body: Box<Expr> },
+    Extern(Prototype),
 }
-
