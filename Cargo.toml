@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 owo-colors = "4"
-inkwell = { version = "0.8.0", features = ["llvm20-1"], path = "../forks/inkwell"}
+inkwell = { version = "0.8.0", features = ["llvm20-1"]}
 llvm-sys = "201.0.0"
