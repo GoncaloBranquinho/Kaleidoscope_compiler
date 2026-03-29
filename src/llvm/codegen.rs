@@ -428,8 +428,8 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 let options = PassBuilderOptions::create();
 
-                if let Err(e) = fn_value.run_passes(
-                    "instcombine,reassociate,gvn,simplifycfg",
+                if let Err(e) = context.module.run_passes(
+                    "function(instcombine,reassociate,gvn,simplifycfg)",
                     &context.target_machine,
                     options,
                 ) {
