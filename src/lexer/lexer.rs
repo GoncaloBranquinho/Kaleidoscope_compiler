@@ -1,41 +1,92 @@
-use logos::{Lexer as LogosLexer, Logos};
+use std::{iter::Peekable, str::CharIndices};
 
-use crate::lexer::tokens::{LexingError, Token};
+use crate::lexer::{keywords::Keyword, tokens::TokenKind};
 
-pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
+pub type TokenResult = Result<TokenKind, LexerError>;
 
-pub struct Lexer<'input> {
-    lexer: LogosLexer<'input, Token>,
-    input: &'input str,
+#[derive(Clone, Debug)]
+pub struct Lexer<'s> {
+    iter: Peekable<CharIndices<'s>>,
 }
 
-impl<'input> Lexer<'input> {
-    pub fn new(input: &'input str) -> Self {
-        let mut lexer = Token::lexer(input);
-        lexer.extras = (1, 1);
-        Self { lexer, input }
+impl<'s> Lexer<'s> {
+    pub fn new(iter: Peekable<CharIndices<'s>>) -> Self {
+        Lexer { iter }
+    }
+
+    fn next_char(&mut self) -> Option<char> {
+        if let Some(c) = self.iter.next() {
+            let (_, ch) = c;
+            return Some(ch);
+        }
+        None
+    }
+
+    fn peek_char(&mut self) -> Option<char> {
+        if let Some(c) = self.iter.peek() {
+            let &(_, ch) = c;
+            return Some(ch);
+        }
+        None
     }
 }
 
-impl<'input> Iterator for Lexer<'input> {
-    type Item = Spanned<Token, usize, LexingError>;
+impl<'s> Iterator for Lexer<'s> {
+    type Item = TokenResult;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let cur = self.lexer.next()?;
-        let span = self.lexer.span();
-        let size = span.end - span.start;
-        let row = self.lexer.extras.0;
-        let col = self.lexer.extras.1;
-        match cur {
-            Ok(token) => {
-                self.lexer.extras.1 += size;
-                Some(Ok((row, token, col)))
+        while let Some(c) = self.peek_char() {
+            if c.is_whitespace() {
+                self.next_char();
+            } else {
+                break;
             }
-            Err(_) => Some(Err(LexingError {
-                token: self.input[span.start..span.end].to_string(),
-                row,
-                col,
-            })),
         }
+
+        let token = match self.peek_char() {
+            Some(a) if a.is_alphabetic() => {
+                let mut id_str = String::new();
+                while let Some(a) = self.peek_char() {
+                    if a.is_alphanumeric() {
+                        id_str.push(a);
+                        self.next_char();
+                    } else {
+                        break;
+                    }
+                }
+
+                if let Ok(keyword) = id_str.parse::<Keyword>() {
+                    Ok(TokenKind::Keyword(keyword))
+                } else {
+                    Ok(TokenKind::Identifier(id_str.clone()))
+                }
+            }
+
+            Some(n) if n.is_numeric() => {
+                let mut n_str = String::new();
+                while let Some(n) = self.peek_char() {
+                    if n.is_numeric() || n == '.' {
+                        n_str.push(n);
+                        self.next_char();
+                    } else {
+                        break;
+                    }
+                }
+                Ok(TokenKind::Number(n_str))
+            }
+            Some(op) => {
+                self.next_char();
+                Ok(TokenKind::Op(op))
+            }
+            None => {
+                return None;
+            }
+        };
+        Some(token)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LexerError {
+    UnknownChar(char),
 }

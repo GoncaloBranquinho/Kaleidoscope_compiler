@@ -1,6 +1,7 @@
 use inkwell::context::Context;
 use kaleipl::{
-    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, Lexer, ProgramParser,
+    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, lexer::Lexer,
+    parser::Parser,
 };
 use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
@@ -11,9 +12,22 @@ pub fn compile(
     codegen_builder: &mut CodeGenBuilder,
     jit: &mut KaleidoscopeJIT,
 ) -> Result<(), CompilerError> {
-    let lexer = Lexer::new(content);
-    let parser = ProgramParser::new();
-    let ast = parser.parse(lexer)?;
+    let lexer = Lexer::new(content.char_indices().peekable());
+    /*let tokens: Result<Vec<TokenKind>, _> = lexer.into_iter().collect();
+    let tokens = tokens.unwrap();
+    println!("{tokens:?}");
+    return Ok(());*/
+    let mut parser = Parser::new(lexer);
+    let ast = match parser.parse_program() {
+        Ok(a) => a,
+        Err(errors) => {
+            for e in errors {
+                println!("{e}");
+            }
+            return Ok(());
+        }
+    };
+
     println!("{:?}", ast);
 
     for decl in ast.iter() {
@@ -22,15 +36,6 @@ pub fn compile(
         decl.compile(codegen_builder, jit)?;
     }
 
-    /*
-    // Delete the anonymous function created to evaluate the top-level expression,
-    // so future top-level expressions don't trigger a "Function cannot be redefined" error.
-    if let Some(f) = codegen_builder.module.get_function("__anon_expr") {
-        unsafe {
-            f.delete();
-        }
-    }
-    */
     Ok(())
 }
 

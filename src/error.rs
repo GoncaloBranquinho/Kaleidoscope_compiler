@@ -1,17 +1,16 @@
-use crate::lexer::tokens::{LexingError, Token};
-
 use ::inkwell::support::LLVMString;
 use inkwell::builder::BuilderError;
-use lalrpop_util::ParseError;
 use llvm_sys::error::{LLVMErrorRef, LLVMGetErrorMessage};
 use owo_colors::OwoColorize;
 use std::{ffi::CStr, fmt};
 
+use crate::{lexer::lexer::LexerError, parser::parser::ParserErrorKind};
+
 #[derive(Debug)]
 pub enum CompilerError {
     Io(std::io::Error),
-    Lexer(LexingError),
-    Parser(ParseError<usize, Token, LexingError>),
+    Lexer(LexerError),
+    Parser(ParserErrorKind),
     Llvm(String),
 }
 
@@ -26,16 +25,28 @@ impl fmt::Display for CompilerError {
     }
 }
 
-impl From<LexingError> for CompilerError {
-    fn from(error: LexingError) -> Self {
-        CompilerError::Lexer(error)
+impl fmt::Display for LexerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LexerError::UnknownChar(c) => write!(f, "Unknown character: {}", c),
+        }
     }
 }
 
-impl From<ParseError<usize, Token, LexingError>> for CompilerError {
-    fn from(error: ParseError<usize, Token, LexingError>) -> Self {
+impl fmt::Display for ParserErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParserErrorKind::LexerError(e) => write!(f, "{}", e),
+            ParserErrorKind::UnexpectedToken(tok) => write!(f, "Unexpected token: {:?}", tok),
+            ParserErrorKind::UnexpectedEof => write!(f, "Unexpected end of file"),
+        }
+    }
+}
+
+impl From<ParserErrorKind> for CompilerError {
+    fn from(error: ParserErrorKind) -> Self {
         match error {
-            ParseError::User { error: e } => CompilerError::Lexer(e),
+            ParserErrorKind::LexerError(e) => CompilerError::Lexer(e),
             _ => CompilerError::Parser(error),
         }
     }

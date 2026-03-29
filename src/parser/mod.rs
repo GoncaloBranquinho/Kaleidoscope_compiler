@@ -1,7 +1,15 @@
-pub mod ast;
+pub mod decl;
+pub mod expr;
+pub mod literals;
+pub mod op;
+pub mod parser;
+pub mod program;
+pub mod types;
 
-use lalrpop_util::lalrpop_mod;
-
-lalrpop_mod!(pub grammar);
-
-pub use grammar::ProgramParser;
+pub use decl::{DeclKind, Prototype};
+pub use expr::{Expr, ExprKind};
+pub use literals::Literal;
+//pub use parser;
+pub use parser::Parser;
+pub use program::Program;
+pub use types::{Type, TypeKind};

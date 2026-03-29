@@ -23,7 +23,8 @@ use llvm_sys::orc2::{
 };
 
 use crate::error::CompilerError;
-use crate::parser::ast::{BinaryOp, Decl, Expr, Prototype};
+use crate::parser::op::BinaryOp;
+use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype};
 
 fn get_function<'ctx>(
     name: &str,
@@ -109,13 +110,13 @@ impl<'ctx> CodeGenBuilder<'ctx> {
 impl<'ctx> CodeGen<'ctx> for Expr {
     type Item = BasicValueEnum<'ctx>;
     fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<Self::Item, CompilerError> {
-        match self {
-            Expr::DoubleLit { value } => {
+        match self.as_ref() {
+            ExprKind::Literal(Literal::F64(value)) => {
                 let f64_type = context.ctx.f64_type();
                 Ok(f64_type.const_float(*value).as_basic_value_enum())
             }
 
-            Expr::Var { name } => {
+            ExprKind::Var(name) => {
                 if let Some(value) = context.map.get(name) {
                     Ok(value.clone())
                 } else {
@@ -126,7 +127,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
             }
 
-            Expr::Binary { op, left, right } => {
+            ExprKind::Binary(op, left, right) => {
                 let l = left.codegen(context)?;
                 let r = right.codegen(context)?;
                 match (l, r) {
@@ -135,15 +136,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                             BinaryOp::Add => {
                                 context.builder.build_float_add(value_l, value_r, "addtmp")
                             }
-
                             BinaryOp::Sub => {
                                 context.builder.build_float_sub(value_l, value_r, "subtmp")
                             }
-
                             BinaryOp::Mult => {
                                 context.builder.build_float_mul(value_l, value_r, "multmp")
                             }
-
                             BinaryOp::Lt => {
                                 let f64_type = context.ctx.f64_type();
                                 let cmp = context.builder.build_float_compare(
@@ -156,6 +154,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                     .builder
                                     .build_unsigned_int_to_float(cmp, f64_type, "booltmp")
                             }
+                            BinaryOp::UserDefined(_) => todo!(),
                         };
                         Ok(res?.as_basic_value_enum())
                     }
@@ -165,7 +164,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
             }
 
-            Expr::Call { name, args } => {
+            ExprKind::Call(name, args) => {
                 let callee = get_function(name, context)?;
                 if args.len() != callee.count_params() as usize {
                     return Err(CompilerError::Llvm(
@@ -191,80 +190,157 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
             }
 
-            Expr::IfThenElse { cond, fst, snd } => {
-                let cond_v = cond.codegen(context)?;
-                if let BasicValueEnum::FloatValue(cond_v) = cond_v {
-                    let cond_v = context.builder.build_float_compare(
-                        FloatPredicate::ONE,
-                        cond_v,
-                        context.ctx.f64_type().const_zero(),
-                        "ifcond",
-                    )?;
-                    let block = context
-                        .builder
-                        .get_insert_block()
-                        .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
-                    let function = block.get_parent().ok_or_else(|| {
-                        CompilerError::Llvm("Basic Block has no parent function".to_string())
-                    })?;
+            ExprKind::IfThenElse(cond, fst, snd) => {
+                let cond_v = if let BasicValueEnum::FloatValue(cond_v) = cond.codegen(context)? {
+                    cond_v
+                } else {
+                    return Err(CompilerError::Llvm(
+                        "Expected condition to be of type float".to_string(),
+                    ));
+                };
 
-                    let then_bb = context.ctx.append_basic_block(function, "then");
-                    let else_bb = context.ctx.append_basic_block(function, "else");
-                    let merge_bb = context.ctx.append_basic_block(function, "ifcont");
+                let cond_v = context.builder.build_float_compare(
+                    FloatPredicate::ONE,
+                    cond_v,
+                    context.ctx.f64_type().const_zero(),
+                    "ifcond",
+                )?;
+                let block = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+                let function = block.get_parent().ok_or_else(|| {
+                    CompilerError::Llvm("Basic Block has no parent function".to_string())
+                })?;
 
+                let then_bb = context.ctx.append_basic_block(function, "then");
+                let else_bb = context.ctx.append_basic_block(function, "else");
+                let merge_bb = context.ctx.append_basic_block(function, "ifcont");
+
+                context
+                    .builder
+                    .build_conditional_branch(cond_v, then_bb, else_bb)?;
+
+                // Codegen then_basic_block
+                context.builder.position_at_end(then_bb);
+                let then_v = fst.codegen(context)?;
+                context.builder.build_unconditional_branch(merge_bb)?;
+                let new_then_bb = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+
+                // Codegen else_basic_block
+                context.builder.position_at_end(else_bb);
+                let else_v = snd.codegen(context)?;
+                context.builder.build_unconditional_branch(merge_bb)?;
+                let new_else_bb = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+
+                // Codegen merge_basic_block
+                context.builder.position_at_end(merge_bb);
+                let phi_node = context.builder.build_phi(context.ctx.f64_type(), "iftmp")?;
+
+                let then_v: &dyn BasicValue = &then_v;
+                let else_v: &dyn BasicValue = &else_v;
+
+                let incoming: Vec<(&dyn BasicValue, BasicBlock)> =
+                    vec![(then_v, new_then_bb), (else_v, new_else_bb)];
+
+                phi_node.add_incoming(&incoming);
+                Ok(phi_node.as_basic_value())
+            }
+            ExprKind::ForLoop(var_name, start, end, step, body) => {
+                let start_v = start.codegen(context)?;
+
+                let block = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+
+                let function = block.get_parent().ok_or_else(|| {
+                    CompilerError::Llvm("Basic Block has no parent function".to_string())
+                })?;
+
+                let loop_bb = context.ctx.append_basic_block(function, "loop");
+                context.builder.build_unconditional_branch(loop_bb)?;
+                context.builder.position_at_end(loop_bb);
+
+                let phi_node = context
+                    .builder
+                    .build_phi(context.ctx.f64_type(), var_name)?;
+                let old_v = context
+                    .map
+                    .insert(var_name.clone(), phi_node.as_basic_value());
+                body.codegen(context)?;
+                let step_v = if let Some(s) = step {
+                    s.codegen(context)?
+                } else {
+                    let f64_type = context.ctx.f64_type();
+                    f64_type.const_float(1.0).as_basic_value_enum()
+                };
+
+                let (phi_node_as_f, step_v_as_f) = match (phi_node.as_basic_value(), step_v) {
+                    (
+                        BasicValueEnum::FloatValue(phi_node_as_f),
+                        BasicValueEnum::FloatValue(step_v_as_f),
+                    ) => (phi_node_as_f, step_v_as_f),
+                    _ => {
+                        return Err(CompilerError::Llvm(
+                            "Phi value and step value must be of type float".to_string(),
+                        ));
+                    }
+                };
+
+                let next_v =
                     context
                         .builder
-                        .build_conditional_branch(cond_v, then_bb, else_bb)?;
+                        .build_float_add(phi_node_as_f, step_v_as_f, "nextvar")?;
 
-                    // Codegen then_basic_block
-                    context.builder.position_at_end(then_bb);
-                    let then_v = if let BasicValueEnum::FloatValue(val) = fst.codegen(context)? {
-                        Ok(val)
-                    } else {
-                        Err(CompilerError::Llvm("Float expected".to_string()))
-                    }?;
-                    context.builder.build_unconditional_branch(merge_bb)?;
-                    let new_then_bb = context
-                        .builder
-                        .get_insert_block()
-                        .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
-
-                    // Codegen else_basic_block
-                    context.builder.position_at_end(else_bb);
-                    let else_v = if let BasicValueEnum::FloatValue(val) = snd.codegen(context)? {
-                        Ok(val)
-                    } else {
-                        Err(CompilerError::Llvm("Float expected".to_string()))
-                    }?;
-                    context.builder.build_unconditional_branch(merge_bb)?;
-                    let new_else_bb = context
-                        .builder
-                        .get_insert_block()
-                        .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
-
-                    // Codegen merge_basic_block
-                    context.builder.position_at_end(merge_bb);
-                    let phi_node = context.builder.build_phi(context.ctx.f64_type(), "iftmp")?;
-
-                    let then_v: &dyn BasicValue = &then_v;
-                    let else_v: &dyn BasicValue = &else_v;
-
-                    let incoming: Vec<(&dyn BasicValue, BasicBlock)> =
-                        vec![(then_v, new_then_bb), (else_v, new_else_bb)];
-
-                    phi_node.add_incoming(&incoming);
-                    Ok(phi_node.as_basic_value())
+                let end_cond = if let BasicValueEnum::FloatValue(end_cond) = end.codegen(context)? {
+                    end_cond
                 } else {
-                    Err(CompilerError::Llvm("Unexpected condition type".to_string()))
+                    return Err(CompilerError::Llvm(
+                        "Expected condition to be of type float".to_string(),
+                    ));
+                };
+                let end_cond = context.builder.build_float_compare(
+                    FloatPredicate::ONE,
+                    end_cond,
+                    context.ctx.f64_type().const_zero(),
+                    "loopcond",
+                )?;
+
+                let loop_end_bb = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+
+                let after_bb = context.ctx.append_basic_block(function, "afterloop");
+
+                let _ = context
+                    .builder
+                    .build_conditional_branch(end_cond, loop_bb, after_bb);
+                context.builder.position_at_end(after_bb);
+
+                let start_v: &dyn BasicValue = &start_v;
+                let next_v: &dyn BasicValue = &next_v;
+
+                let incoming: Vec<(&dyn BasicValue, BasicBlock)> =
+                    vec![(start_v, block), (next_v, loop_end_bb)];
+
+                phi_node.add_incoming(&incoming);
+
+                if let Some(val) = old_v {
+                    context.map.insert(var_name.clone(), val);
+                } else {
+                    context.map.remove(var_name);
                 }
+
+                Ok(context.ctx.f64_type().const_zero().as_basic_value_enum())
             }
-            Expr::ForLoop {
-                var_name,
-                start,
-                end,
-                step,
-                body,
-            } => Err(CompilerError::Llvm(("to be finished").to_string())),
         }
     }
 }
@@ -292,13 +368,13 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
     }
 }
 
-impl<'ctx> CodeGen<'ctx> for Decl {
+impl<'ctx> CodeGen<'ctx> for DeclKind {
     type Item = FunctionValue<'ctx>;
     fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<Self::Item, CompilerError> {
         match self {
-            Decl::Extern(proto) => proto.codegen(context),
+            DeclKind::Extern(proto) => proto.codegen(context),
 
-            Decl::Function { proto, body } => {
+            DeclKind::Function(proto, body) => {
                 context
                     .function_protos
                     .insert(proto.name.clone(), proto.clone());
@@ -348,7 +424,7 @@ impl<'ctx> CodeGen<'ctx> for Decl {
                     }
                 }
 
-                // optimizing the newly created funciton
+                // optimizing the newly created function
 
                 let options = PassBuilderOptions::create();
 
@@ -448,21 +524,21 @@ pub trait JitCompiler<'ctx> {
     ) -> Result<(), CompilerError>;
 }
 
-impl<'ctx> JitCompiler<'ctx> for Decl {
+impl<'ctx> JitCompiler<'ctx> for DeclKind {
     fn compile(
         &self,
         codegen_builder: &mut CodeGenBuilder<'ctx>,
         jit: &mut KaleidoscopeJIT,
     ) -> Result<(), CompilerError> {
         match self {
-            Decl::Extern(proto) => {
+            DeclKind::Extern(proto) => {
                 codegen_builder
                     .function_protos
                     .insert(proto.name.clone(), proto.clone());
                 Ok(())
             }
 
-            Decl::Function { proto, body: _ } => {
+            DeclKind::Function(proto, _) => {
                 if proto.name == "__anon_expr" {
                     unsafe {
                         let dylib = LLVMOrcLLJITGetMainJITDylib(jit.lljit);
@@ -512,7 +588,7 @@ impl<'ctx> JitCompiler<'ctx> for Decl {
         jit: &mut KaleidoscopeJIT,
     ) -> Result<(), CompilerError> {
         match self {
-            Decl::Function { .. } => {
+            DeclKind::Function { .. } => {
                 let executer_addr = jit.lookup("__anon_expr")?;
                 let res = jit.call(executer_addr);
                 println!("Evaluated to {res}");
