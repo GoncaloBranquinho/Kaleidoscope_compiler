@@ -1,7 +1,6 @@
+pub mod core;
 pub mod keywords;
-pub mod lexer;
-pub mod symbols;
 pub mod tokens;
 
+pub use core::Lexer;
 pub use keywords::Keyword;
-pub use lexer::Lexer;

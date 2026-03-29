@@ -2,8 +2,8 @@ use std::{collections::HashMap, iter::Peekable};
 
 use crate::{
     lexer::{
+        core::{LexerError, TokenResult},
         keywords::Keyword::*,
-        lexer::{LexerError, TokenResult},
         tokens::TokenKind,
     },
     parser::{DeclKind, Expr, ExprKind, Literal, Program, Prototype, TypeKind, decl::Arg},

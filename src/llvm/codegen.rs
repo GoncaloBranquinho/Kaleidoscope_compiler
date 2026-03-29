@@ -118,7 +118,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 
             ExprKind::Var(name) => {
                 if let Some(value) = context.map.get(name) {
-                    Ok(value.clone())
+                    Ok(*value)
                 } else {
                     Err(CompilerError::Llvm(format!(
                         "Unknown variable name: {}",
@@ -460,7 +460,7 @@ impl KaleidoscopeJIT {
         }
     }
 
-    pub fn add_module(
+    fn add_module(
         &self,
         tsm: LLVMOrcThreadSafeModuleRef,
         rt: LLVMOrcResourceTrackerRef,
@@ -475,7 +475,7 @@ impl KaleidoscopeJIT {
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Result<LLVMOrcExecutorAddress, CompilerError> {
+    fn lookup(&self, name: &str) -> Result<LLVMOrcExecutorAddress, CompilerError> {
         unsafe {
             let mut result: LLVMOrcExecutorAddress = 0;
 
@@ -491,14 +491,14 @@ impl KaleidoscopeJIT {
         }
     }
 
-    pub fn call(&self, addr: LLVMOrcExecutorAddress) -> f64 {
+    fn call(&self, addr: LLVMOrcExecutorAddress) -> f64 {
         unsafe {
             let function: extern "C" fn() -> f64 = transmute(addr as usize);
             function()
         }
     }
 
-    pub fn remove(&self, rt: LLVMOrcResourceTrackerRef) -> Result<(), CompilerError> {
+    fn remove(&self, rt: LLVMOrcResourceTrackerRef) -> Result<(), CompilerError> {
         unsafe {
             let err = LLVMOrcResourceTrackerRemove(rt);
             if !err.is_null() {

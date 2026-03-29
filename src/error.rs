@@ -4,7 +4,7 @@ use llvm_sys::error::{LLVMErrorRef, LLVMGetErrorMessage};
 use owo_colors::OwoColorize;
 use std::{ffi::CStr, fmt};
 
-use crate::{lexer::lexer::LexerError, parser::parser::ParserErrorKind};
+use crate::{lexer::core::LexerError, parser::core::ParserErrorKind};
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -70,13 +70,19 @@ impl From<BuilderError> for CompilerError {
     }
 }
 
-impl From<LLVMErrorRef> for CompilerError {
-    fn from(err: LLVMErrorRef) -> Self {
+impl CompilerError {
+    fn from_aux(err: LLVMErrorRef) -> Self {
         unsafe {
             let message = LLVMGetErrorMessage(err);
             let e = CStr::from_ptr(message).to_string_lossy().into_owned();
             CompilerError::Llvm(e)
         }
+    }
+}
+
+impl From<LLVMErrorRef> for CompilerError {
+    fn from(err: LLVMErrorRef) -> Self {
+        CompilerError::from_aux(err)
     }
 }
 
