@@ -16,7 +16,7 @@ impl TokenKind {
         if let TokenKind::Op(c) = self {
             c
         } else {
-            panic!("Found {self:?} but expected the Op variatnt")
+            panic!("Found {self:?} but expected the Op variant")
         }
     }
 
@@ -24,7 +24,7 @@ impl TokenKind {
         if let TokenKind::Identifier(i) = self {
             i
         } else {
-            panic!("Found {self:?} but expected the Identifier variatnt")
+            panic!("Found {self:?} but expected the Identifier variant")
         }
     }
 
@@ -32,7 +32,7 @@ impl TokenKind {
         if let TokenKind::Keyword(k) = self {
             k
         } else {
-            panic!("Found {self:?} but expected the Keyword variatnt")
+            panic!("Found {self:?} but expected the Keyword variant")
         }
     }
 
@@ -40,7 +40,7 @@ impl TokenKind {
         if let TokenKind::Number(n) = self {
             n
         } else {
-            panic!("Found {self:?} but expected the Op variatnt")
+            panic!("Found {self:?} but expected the Op variant")
         }
     }
 }
