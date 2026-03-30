@@ -25,7 +25,7 @@ use llvm_sys::orc2::{
 
 use crate::error::CompilerError;
 use crate::parser::op::BinaryOp;
-use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype};
+use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, UnaryOp};
 
 fn get_function<'ctx>(
     name: &str,
@@ -128,21 +128,49 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
             }
 
+            ExprKind::Unary(op, expr) => {
+                let l = expr.codegen(context)?;
+
+                match l {
+                    BasicValueEnum::FloatValue(_) => {
+                        let res = match op {
+                            UnaryOp::UserDefined(op) => {
+                                let mut fn_name = "unary".to_string();
+                                fn_name.push(*op);
+                                let fn_value = get_function(&fn_name, context)?;
+                                let call =
+                                    context.builder.build_call(fn_value, &[l.into()], "unop")?;
+                                let value = call.try_as_basic_value().basic().ok_or(
+                                    CompilerError::Llvm(
+                                        "Expected function to return a value".to_string(),
+                                    ),
+                                )?;
+                                value.into_float_value()
+                            }
+                        };
+                        Ok(res.into())
+                    }
+                    _ => Err(CompilerError::Llvm(
+                        "Expression must be of float type".to_string(),
+                    )),
+                }
+            }
+
             ExprKind::Binary(op, left, right) => {
                 let l = left.codegen(context)?;
                 let r = right.codegen(context)?;
                 match (l, r) {
                     (BasicValueEnum::FloatValue(value_l), BasicValueEnum::FloatValue(value_r)) => {
                         let res = match op {
-                            BinaryOp::Add => {
-                                context.builder.build_float_add(value_l, value_r, "addtmp")
-                            }
-                            BinaryOp::Sub => {
-                                context.builder.build_float_sub(value_l, value_r, "subtmp")
-                            }
-                            BinaryOp::Mult => {
-                                context.builder.build_float_mul(value_l, value_r, "multmp")
-                            }
+                            BinaryOp::Add => context
+                                .builder
+                                .build_float_add(value_l, value_r, "addtmp")?,
+                            BinaryOp::Sub => context
+                                .builder
+                                .build_float_sub(value_l, value_r, "subtmp")?,
+                            BinaryOp::Mult => context
+                                .builder
+                                .build_float_mul(value_l, value_r, "multmp")?,
                             BinaryOp::Lt => {
                                 let f64_type = context.ctx.f64_type();
                                 let cmp = context.builder.build_float_compare(
@@ -153,11 +181,26 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                 )?;
                                 context
                                     .builder
-                                    .build_unsigned_int_to_float(cmp, f64_type, "booltmp")
+                                    .build_unsigned_int_to_float(cmp, f64_type, "booltmp")?
                             }
-                            BinaryOp::UserDefined(_) => todo!(),
+                            BinaryOp::UserDefined(op) => {
+                                let mut fn_name = "binary".to_string();
+                                fn_name.push(*op);
+                                let fn_value = get_function(&fn_name, context)?;
+                                let call = context.builder.build_call(
+                                    fn_value,
+                                    &[l.into(), r.into()],
+                                    "binop",
+                                )?;
+                                let value = call.try_as_basic_value().basic().ok_or(
+                                    CompilerError::Llvm(
+                                        "Expected function to return a value".to_string(),
+                                    ),
+                                )?;
+                                value.into_float_value()
+                            }
                         };
-                        Ok(res?.as_basic_value_enum())
+                        Ok(res.into())
                     }
                     _ => Err(CompilerError::Llvm(
                         "Expression must be of float type".to_string(),
@@ -185,7 +228,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         let value = v.try_as_basic_value().basic().ok_or(CompilerError::Llvm(
                             "Expected function to return a value".to_string(),
                         ))?;
-                        Ok(value.into_float_value().as_basic_value_enum())
+                        Ok(value.into_float_value().into())
                     }
                     Err(e) => Err(e.into()),
                 }

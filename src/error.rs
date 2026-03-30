@@ -39,6 +39,7 @@ impl fmt::Display for ParserErrorKind {
             ParserErrorKind::LexerError(e) => write!(f, "{}", e),
             ParserErrorKind::UnexpectedToken(tok) => write!(f, "Unexpected token: {:?}", tok),
             ParserErrorKind::UnexpectedEof => write!(f, "Unexpected end of file"),
+            ParserErrorKind::InvalidSignatuere => write!(f, "Invalid signature"),
         }
     }
 }

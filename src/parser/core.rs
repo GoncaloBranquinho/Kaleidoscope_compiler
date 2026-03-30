@@ -9,20 +9,14 @@ use crate::{
     parser::{DeclKind, Expr, ExprKind, Literal, Program, Prototype, TypeKind, decl::Arg},
 };
 
-pub struct Parser<I: Iterator> {
+pub struct Parser<'a, I: Iterator> {
     errors: Vec<ParserErrorKind>,
     token_stream: Peekable<I>,
-    binop_precedence: HashMap<char, i8>,
+    binop_precedence: &'a mut HashMap<char, i8>,
 }
 
-impl<I: Iterator<Item = TokenResult>> Parser<I> {
-    pub fn new(token_stream: I) -> Self {
-        let mut binop_precedence = HashMap::new();
-        binop_precedence.insert('<', 10);
-        binop_precedence.insert('+', 20);
-        binop_precedence.insert('-', 20);
-        binop_precedence.insert('*', 40);
-
+impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
+    pub fn new(token_stream: I, binop_precedence: &'a mut HashMap<char, i8>) -> Self {
         Parser {
             errors: Vec::new(),
             token_stream: token_stream.peekable(),
@@ -62,10 +56,49 @@ impl<I: Iterator<Item = TokenResult>> Parser<I> {
     }
 
     fn parse_prototype(&mut self) -> Result<Prototype, ParserErrorKind> {
+        let kind: u8;
+
         let id = match self.peek_token()? {
             TokenKind::Identifier(id) => {
                 self.consume_token()?;
+                kind = 0;
                 id.clone()
+            }
+            TokenKind::Keyword(Binary) => {
+                self.consume_token()?;
+                match self.peek_token()? {
+                    TokenKind::Op(c) if c.is_ascii() => {
+                        kind = 2;
+                        self.consume_token()?;
+                        if let TokenKind::Number(n) = self.peek_token()? {
+                            let num: i32 = n.parse().unwrap();
+                            if !(1..=100).contains(&num) {
+                                return Err(ParserErrorKind::UnexpectedToken(TokenKind::Number(n)));
+                            }
+                            self.binop_precedence.insert(c, num as i8);
+                            self.consume_token()?;
+                        } else {
+                            self.binop_precedence.insert(c, 30);
+                        }
+                        let mut s = "binary".to_string();
+                        s.push(c);
+                        s
+                    }
+                    t => return Err(ParserErrorKind::UnexpectedToken(t)),
+                }
+            }
+            TokenKind::Keyword(Unary) => {
+                self.consume_token()?;
+                match self.peek_token()? {
+                    TokenKind::Op(c) if c.is_ascii() => {
+                        self.consume_token()?;
+                        kind = 1;
+                        let mut s = "unary".to_string();
+                        s.push(c);
+                        s
+                    }
+                    t => return Err(ParserErrorKind::UnexpectedToken(t)),
+                }
             }
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         };
@@ -91,6 +124,9 @@ impl<I: Iterator<Item = TokenResult>> Parser<I> {
         }
 
         self.consume_token()?;
+        if kind > 0 && args.len() != kind as usize {
+            return Err(ParserErrorKind::InvalidSignatuere);
+        }
         Ok(Prototype::new(id, args))
     }
 
@@ -124,8 +160,18 @@ impl<I: Iterator<Item = TokenResult>> Parser<I> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParserErrorKind> {
-        let lhs = self.parse_primary()?;
+        let lhs = self.parse_unary()?;
         self.parse_bin_op_rhs(0, lhs)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, ParserErrorKind> {
+        if !matches!(self.peek_token()?, TokenKind::Op(c) if c.is_ascii() && c != '(' && c != ',') {
+            return self.parse_primary();
+        }
+
+        let op = self.consume_token()?;
+        let expr = self.parse_unary()?;
+        Ok(Box::new(ExprKind::Unary(op.into_op().into(), expr)))
     }
 
     fn parse_bin_op_rhs(&mut self, expr_prec: i8, mut lhs: Expr) -> Result<Expr, ParserErrorKind> {
@@ -136,7 +182,7 @@ impl<I: Iterator<Item = TokenResult>> Parser<I> {
             }
 
             let bin_op = self.consume_token()?;
-            let mut rhs = self.parse_primary()?;
+            let mut rhs = self.parse_unary()?;
             let next_prec = self.get_token_precedence()?;
             if tok_prec < next_prec {
                 rhs = self.parse_bin_op_rhs(tok_prec + 1, rhs)?;
@@ -322,6 +368,7 @@ pub enum ParserErrorKind {
     LexerError(LexerError),
     UnexpectedToken(TokenKind),
     UnexpectedEof,
+    InvalidSignatuere,
 }
 
 impl<T> From<LexerError> for Result<T, ParserErrorKind> {

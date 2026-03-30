@@ -9,6 +9,8 @@ pub enum Keyword {
     Else,
     For,
     In,
+    Unary,
+    Binary,
 }
 
 impl FromStr for Keyword {
@@ -23,6 +25,8 @@ impl FromStr for Keyword {
             "else" => Ok(Keyword::Else),
             "for" => Ok(Keyword::For),
             "in" => Ok(Keyword::In),
+            "binary" => Ok(Keyword::Binary),
+            "unary" => Ok(Keyword::Unary),
             _ => Err(()),
         }
     }

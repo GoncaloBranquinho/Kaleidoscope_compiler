@@ -5,12 +5,16 @@ use kaleipl::{
 };
 use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
-use std::io::{self, Write};
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+};
 
 pub fn compile(
     content: &str,
     codegen_builder: &mut CodeGenBuilder,
     jit: &mut KaleidoscopeJIT,
+    binop_precedence: &mut HashMap<char, i8>,
 ) -> Result<(), CompilerError> {
     let lexer = Lexer::new(content.char_indices().peekable());
     /*let tokens: Result<Vec<kaleipl::lexer::tokens::TokenKind>, kaleipl::lexer::core::LexerError> =
@@ -18,7 +22,7 @@ pub fn compile(
     let tokens = tokens.unwrap();
     println!("{tokens:?}");
     return Ok(());*/
-    let mut parser = Parser::new(lexer);
+    let mut parser = Parser::new(lexer, binop_precedence);
     let ast = match parser.parse_program() {
         Ok(a) => a,
         Err(errors) => {
@@ -49,6 +53,13 @@ fn main() -> Result<(), CompilerError> {
 
     let mut jit = KaleidoscopeJIT::new().unwrap();
 
+    let mut binop_precedence: HashMap<char, i8> = HashMap::new();
+
+    binop_precedence.insert('<', 10);
+    binop_precedence.insert('+', 20);
+    binop_precedence.insert('-', 20);
+    binop_precedence.insert('*', 40);
+
     println!("Welcome to kaleipl. For help, type :help");
 
     loop {
@@ -56,7 +67,12 @@ fn main() -> Result<(), CompilerError> {
         io::stdout().flush().unwrap();
         let mut input = String::new();
         let _ = io::stdin().read_line(&mut input)?;
-        if let Err(error) = compile(&input, &mut codegen_builder, &mut jit) {
+        if let Err(error) = compile(
+            &input,
+            &mut codegen_builder,
+            &mut jit,
+            &mut binop_precedence,
+        ) {
             eprintln!("{error}");
         }
     }

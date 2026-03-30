@@ -19,6 +19,19 @@ impl BinaryOp {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum UnaryOp {
+    UserDefined(char),
+}
+
+impl UnaryOp {
+    pub fn as_str(&self) -> String {
+        match self {
+            UnaryOp::UserDefined(char) => char.to_string(),
+        }
+    }
+}
+
 impl From<char> for BinaryOp {
     fn from(tok: char) -> Self {
         match tok {
@@ -28,5 +41,11 @@ impl From<char> for BinaryOp {
             '<' => BinaryOp::Lt,
             c => BinaryOp::UserDefined(c),
         }
+    }
+}
+
+impl From<char> for UnaryOp {
+    fn from(tok: char) -> Self {
+        UnaryOp::UserDefined(tok)
     }
 }
