@@ -1,3 +1,3 @@
 fn main() {
-    println!("cargo::rustc-link-arg=-E");
+    println!("cargo:rustc-link-arg=-Wl,-E");
 }
