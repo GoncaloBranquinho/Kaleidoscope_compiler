@@ -29,11 +29,11 @@ pub fn compile(
         }
     };
 
-    println!("{:?}", ast);
+    //println!("{:?}", ast);
 
     for decl in ast.iter() {
-        let fn_value = decl.codegen(codegen_builder)?;
-        fn_value.print_to_stderr();
+        let _ = decl.codegen(codegen_builder)?;
+        //fn_value.print_to_stderr();
         decl.compile(codegen_builder, jit)?;
     }
 
@@ -61,5 +61,3 @@ fn main() -> Result<(), CompilerError> {
         }
     }
 }
-
-//separar jit e codegenbuilder. Para poder resetar

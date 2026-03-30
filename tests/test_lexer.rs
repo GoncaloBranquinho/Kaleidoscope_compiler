@@ -37,25 +37,9 @@ fn test_valid_tokens() {
 }
 
 #[test]
-fn test_numbers() {}
-
-#[test]
-fn test_extern() {}
-
-#[test]
-fn test_definition() {}
-
-#[test]
-fn test_expressions() {}
-
-#[test]
-fn test_for_loop() {}
-
-#[test]
-fn test_if_then_else() {}
-
-#[test]
-fn test_invalid1() {}
-
-#[test]
-fn test_invalid2() {}
+fn test_invalid() {
+    let input = "";
+    let mut lexer = Lexer::new(input.char_indices().peekable());
+    let tokens: Vec<TokenResult> = vec![];
+    assert_tokens(&mut lexer, &tokens);
+}

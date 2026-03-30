@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::io::Write;
 use std::mem::{forget, replace, transmute};
 
 use inkwell::basic_block::BasicBlock;
@@ -597,4 +598,17 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
             _ => Ok(()),
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn putchard(x: f64) -> f64 {
+    print!("{}", x as u8 as char);
+    std::io::stdout().flush().unwrap();
+    0.0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn printd(x: f64) -> f64 {
+    println!("{}", x);
+    0.0
 }
