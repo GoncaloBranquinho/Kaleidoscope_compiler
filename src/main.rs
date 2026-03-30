@@ -13,7 +13,8 @@ pub fn compile(
     jit: &mut KaleidoscopeJIT,
 ) -> Result<(), CompilerError> {
     let lexer = Lexer::new(content.char_indices().peekable());
-    /*let tokens: Result<Vec<TokenKind>, _> = lexer.into_iter().collect();
+    /*let tokens: Result<Vec<kaleipl::lexer::tokens::TokenKind>, kaleipl::lexer::core::LexerError> =
+        lexer.into_iter().collect();
     let tokens = tokens.unwrap();
     println!("{tokens:?}");
     return Ok(());*/
