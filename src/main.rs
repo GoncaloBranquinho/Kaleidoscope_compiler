@@ -33,7 +33,7 @@ pub fn compile(
         }
     };
 
-    //println!("{:?}", ast);
+    println!("{:?}", ast);
 
     for decl in ast.iter() {
         let _ = decl.codegen(codegen_builder)?;
@@ -55,6 +55,7 @@ fn main() -> Result<(), CompilerError> {
 
     let mut binop_precedence: HashMap<char, i8> = HashMap::new();
 
+    binop_precedence.insert('=', 2);
     binop_precedence.insert('<', 10);
     binop_precedence.insert('+', 20);
     binop_precedence.insert('-', 20);

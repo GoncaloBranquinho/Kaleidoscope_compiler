@@ -1,6 +1,7 @@
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinaryOp {
     Add,
+    Assign,
     Lt,
     Mult,
     Sub,
@@ -11,6 +12,7 @@ impl BinaryOp {
     pub fn as_str(&self) -> String {
         match self {
             BinaryOp::Add => "+".to_string(),
+            BinaryOp::Assign => "=".to_string(),
             BinaryOp::Lt => "<".to_string(),
             BinaryOp::Mult => "*".to_string(),
             BinaryOp::Sub => "-".to_string(),
@@ -39,6 +41,7 @@ impl From<char> for BinaryOp {
             '-' => BinaryOp::Sub,
             '*' => BinaryOp::Mult,
             '<' => BinaryOp::Lt,
+            '=' => BinaryOp::Assign,
             c => BinaryOp::UserDefined(c),
         }
     }

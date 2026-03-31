@@ -11,6 +11,7 @@ pub enum Keyword {
     In,
     Unary,
     Binary,
+    Var,
 }
 
 impl FromStr for Keyword {
@@ -27,6 +28,7 @@ impl FromStr for Keyword {
             "in" => Ok(Keyword::In),
             "binary" => Ok(Keyword::Binary),
             "unary" => Ok(Keyword::Unary),
+            "var" => Ok(Keyword::Var),
             _ => Err(()),
         }
     }

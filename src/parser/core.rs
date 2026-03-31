@@ -155,6 +155,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             TokenKind::Op('(') => self.parse_paren(),
             TokenKind::Keyword(If) => self.parse_if(),
             TokenKind::Keyword(For) => self.parse_for(),
+            TokenKind::Keyword(Var) => self.parse_var(),
             t => Err(ParserErrorKind::UnexpectedToken(t)),
         }
     }
@@ -324,7 +325,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         let identifier = self.consume_token()?.into_identifier();
         let token = self.opt_peek_token()?;
         if token.is_none() || !matches!(token, Some(TokenKind::Op('('))) {
-            let expr_var = ExprKind::Var(identifier);
+            let expr_var = ExprKind::Identifier(identifier);
             return Ok(Box::new(expr_var));
         }
 
@@ -347,6 +348,45 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         self.consume_token()?;
         let expr_call = ExprKind::Call(identifier.clone(), args);
         Ok(Box::new(expr_call))
+    }
+
+    fn parse_var(&mut self) -> Result<Expr, ParserErrorKind> {
+        self.consume_token()?;
+        let mut vars: Vec<(String, Option<Expr>)> = Vec::new();
+        let mut token = self.peek_token()?;
+
+        if !matches!(token, TokenKind::Identifier(_)) {
+            return Err(ParserErrorKind::UnexpectedToken(token));
+        }
+
+        loop {
+            let name = self.consume_token()?.into_identifier();
+            let init = match self.peek_token()? {
+                TokenKind::Op('=') => {
+                    self.consume_token()?;
+                    Some(self.parse_expr()?)
+                }
+                _ => None,
+            };
+            vars.push((name, init));
+            if !matches!(self.peek_token()?, TokenKind::Op(',')) {
+                break;
+            }
+            self.consume_token()?;
+
+            token = self.peek_token()?;
+
+            if !matches!(token, TokenKind::Identifier(_)) {
+                return Err(ParserErrorKind::UnexpectedToken(token));
+            }
+        }
+        token = self.peek_token()?;
+        if !matches!(token, TokenKind::Keyword(In)) {
+            return Err(ParserErrorKind::UnexpectedToken(token));
+        }
+        self.consume_token()?;
+        let body = self.parse_expr()?;
+        Ok(Box::new(ExprKind::Var(vars, body)))
     }
 
     fn error_recovery<F>(&mut self, program: &mut Vec<DeclKind>, f: F)

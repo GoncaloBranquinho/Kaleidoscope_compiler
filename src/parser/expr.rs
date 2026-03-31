@@ -4,7 +4,8 @@ pub type Expr = Box<ExprKind>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
-    Var(String),
+    Identifier(String),
+    Var(Vec<(String, Option<Expr>)>, Expr),
     Literal(Literal),
     Binary(BinaryOp, Expr, Expr),
     Unary(UnaryOp, Expr),

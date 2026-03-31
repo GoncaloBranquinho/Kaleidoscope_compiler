@@ -10,7 +10,9 @@ use inkwell::module::Module;
 use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::BasicMetadataTypeEnum;
-use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue};
+use inkwell::values::{
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
+};
 use inkwell::{FloatPredicate, OptimizationLevel};
 use llvm_sys::error::LLVMErrorRef;
 use llvm_sys::orc2::lljit::{
@@ -34,7 +36,7 @@ fn get_function<'ctx>(
     if let Some(callee) = context.module.get_function(name) {
         return Ok(callee);
     }
-
+    println!("{name}");
     let proto = context.function_protos.get(name);
     if let Some(proto) = proto {
         let proto = proto.clone();
@@ -46,13 +48,29 @@ fn get_function<'ctx>(
     ))
 }
 
+fn create_entry_block_alloca<'ctx>(
+    context: &mut CodeGenBuilder<'ctx>,
+    fn_value: FunctionValue<'ctx>,
+    var_name: &str,
+) -> Result<PointerValue<'ctx>, CompilerError> {
+    let builder = context.ctx.create_builder();
+    let block = fn_value
+        .get_first_basic_block()
+        .ok_or_else(|| CompilerError::Llvm("No basic block".to_string()))?;
+    builder.position_at_end(block);
+    if let Some(inst) = block.get_first_instruction() {
+        builder.position_before(&inst);
+    }
+    Ok(builder.build_alloca(context.ctx.f64_type(), var_name)?)
+}
+
 pub struct CodeGenBuilder<'ctx> {
     pub ctx: &'ctx Context,
     pub tsc: &'ctx LLVMOrcThreadSafeContextRef,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub target_machine: TargetMachine,
-    pub map: HashMap<String, BasicValueEnum<'ctx>>,
+    pub map: HashMap<String, PointerValue<'ctx>>,
     pub function_protos: HashMap<String, Prototype>,
 }
 
@@ -117,15 +135,49 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 Ok(f64_type.const_float(*value).as_basic_value_enum())
             }
 
-            ExprKind::Var(name) => {
+            ExprKind::Identifier(name) => {
                 if let Some(value) = context.map.get(name) {
-                    Ok(*value)
+                    Ok(context
+                        .builder
+                        .build_load(context.ctx.f64_type(), *value, name)?)
                 } else {
                     Err(CompilerError::Llvm(format!(
                         "Unknown variable name: {}",
                         name
                     )))
                 }
+            }
+
+            ExprKind::Var(vars, body) => {
+                let mut old_bindings: Vec<Option<PointerValue<'ctx>>> = Vec::new();
+                let block = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+                let function = block.get_parent().ok_or_else(|| {
+                    CompilerError::Llvm("Basic Block has no parent function".to_string())
+                })?;
+
+                for (name, init) in vars.clone() {
+                    let init_val = if let Some(init_val) = init {
+                        init_val.codegen(context)?
+                    } else {
+                        context.ctx.f64_type().const_zero().into()
+                    };
+
+                    let alloca = create_entry_block_alloca(context, function, &name)?;
+                    context.builder.build_store(alloca, init_val)?;
+                    old_bindings.push(context.map.insert(name, alloca));
+                }
+                let body = body.codegen(context)?;
+                for i in 0..vars.len() {
+                    if let Some(binding) = old_bindings[i] {
+                        context.map.insert(vars[i].0.clone(), binding);
+                    } else {
+                        context.map.remove(&vars[i].0);
+                    }
+                }
+                Ok(body)
             }
 
             ExprKind::Unary(op, expr) => {
@@ -157,6 +209,22 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
 
             ExprKind::Binary(op, left, right) => {
+                if let BinaryOp::Assign = op {
+                    let s = if let ExprKind::Identifier(s) = left.as_ref() {
+                        s
+                    } else {
+                        return Err(CompilerError::Llvm(
+                            "Left-hand side of assignment must be a variable".to_string(),
+                        ));
+                    };
+                    let r = right.codegen(context)?;
+                    if let Some(var) = context.map.get(s) {
+                        context.builder.build_store(*var, r)?;
+                        return Ok(r);
+                    } else {
+                        return Err(CompilerError::Llvm(format!("Unknown variable name: {}", s)));
+                    }
+                }
                 let l = left.codegen(context)?;
                 let r = right.codegen(context)?;
                 match (l, r) {
@@ -199,6 +267,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                 )?;
                                 value.into_float_value()
                             }
+                            BinaryOp::Assign => unreachable!(
+                                "Temporary: this code is unreachable until semantic analysis is implemented. It will be removed afterwards"
+                            ),
                         };
                         Ok(res.into())
                     }
@@ -297,8 +368,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 Ok(phi_node.as_basic_value())
             }
             ExprKind::ForLoop(var_name, start, end, step, body) => {
-                let start_v = start.codegen(context)?;
-
                 let block = context
                     .builder
                     .get_insert_block()
@@ -308,17 +377,21 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     CompilerError::Llvm("Basic Block has no parent function".to_string())
                 })?;
 
+                let alloca = create_entry_block_alloca(context, function, var_name)?;
+
+                let start_v = start.codegen(context)?;
+
+                context.builder.build_store(alloca, start_v)?;
+
                 let loop_bb = context.ctx.append_basic_block(function, "loop");
+
                 context.builder.build_unconditional_branch(loop_bb)?;
                 context.builder.position_at_end(loop_bb);
 
-                let phi_node = context
-                    .builder
-                    .build_phi(context.ctx.f64_type(), var_name)?;
-                let old_v = context
-                    .map
-                    .insert(var_name.clone(), phi_node.as_basic_value());
+                let old_v = context.map.insert(var_name.clone(), alloca);
+
                 body.codegen(context)?;
+
                 let step_v = if let Some(s) = step {
                     s.codegen(context)?
                 } else {
@@ -326,22 +399,13 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     f64_type.const_float(1.0).as_basic_value_enum()
                 };
 
-                let (phi_node_as_f, step_v_as_f) = match (phi_node.as_basic_value(), step_v) {
-                    (
-                        BasicValueEnum::FloatValue(phi_node_as_f),
-                        BasicValueEnum::FloatValue(step_v_as_f),
-                    ) => (phi_node_as_f, step_v_as_f),
-                    _ => {
-                        return Err(CompilerError::Llvm(
-                            "Phi value and step value must be of type float".to_string(),
-                        ));
-                    }
+                let step_v_as_f = if let BasicValueEnum::FloatValue(step_v_as_f) = step_v {
+                    step_v_as_f
+                } else {
+                    return Err(CompilerError::Llvm(
+                        "Step value must be of type float".to_string(),
+                    ));
                 };
-
-                let next_v =
-                    context
-                        .builder
-                        .build_float_add(phi_node_as_f, step_v_as_f, "nextvar")?;
 
                 let end_cond = if let BasicValueEnum::FloatValue(end_cond) = end.codegen(context)? {
                     end_cond
@@ -350,6 +414,26 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         "Expected condition to be of type float".to_string(),
                     ));
                 };
+
+                let cur_var =
+                    context
+                        .builder
+                        .build_load(context.ctx.f64_type(), alloca, var_name)?;
+
+                let cur_v_as_f = if let BasicValueEnum::FloatValue(cur_v_as_f) = cur_var {
+                    cur_v_as_f
+                } else {
+                    return Err(CompilerError::Llvm(
+                        "Pointer value must be of type float".to_string(),
+                    ));
+                };
+
+                let next_v = context
+                    .builder
+                    .build_float_add(cur_v_as_f, step_v_as_f, "nextvar")?;
+
+                context.builder.build_store(alloca, next_v)?;
+
                 let end_cond = context.builder.build_float_compare(
                     FloatPredicate::ONE,
                     end_cond,
@@ -357,25 +441,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     "loopcond",
                 )?;
 
-                let loop_end_bb = context
-                    .builder
-                    .get_insert_block()
-                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
-
                 let after_bb = context.ctx.append_basic_block(function, "afterloop");
 
-                let _ = context
+                context
                     .builder
-                    .build_conditional_branch(end_cond, loop_bb, after_bb);
+                    .build_conditional_branch(end_cond, loop_bb, after_bb)?;
                 context.builder.position_at_end(after_bb);
-
-                let start_v: &dyn BasicValue = &start_v;
-                let next_v: &dyn BasicValue = &next_v;
-
-                let incoming: Vec<(&dyn BasicValue, BasicBlock)> =
-                    vec![(start_v, block), (next_v, loop_end_bb)];
-
-                phi_node.add_incoming(&incoming);
 
                 if let Some(val) = old_v {
                     context.map.insert(var_name.clone(), val);
@@ -443,10 +514,11 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 for (i, arg) in fn_value.get_param_iter().enumerate() {
                     arg.set_name(&proto.args[i].name);
-                    context.map.insert(
-                        arg.get_name().to_string_lossy().to_string(),
-                        arg.into_float_value().as_basic_value_enum(),
-                    );
+                    let alloca = create_entry_block_alloca(context, fn_value, &proto.name)?;
+                    context.builder.build_store(alloca, arg)?;
+                    context
+                        .map
+                        .insert(arg.get_name().to_string_lossy().to_string(), alloca);
                 }
 
                 let body_value = body.codegen(context);
@@ -473,7 +545,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                 let options = PassBuilderOptions::create();
 
                 if let Err(e) = context.module.run_passes(
-                    "function(instcombine,reassociate,gvn,simplifycfg)",
+                    "function(mem2reg,instcombine,reassociate,gvn,simplifycfg)",
                     &context.target_machine,
                     options,
                 ) {
