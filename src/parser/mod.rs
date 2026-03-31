@@ -7,7 +7,7 @@ pub mod program;
 pub mod types;
 
 pub use core::Parser;
-pub use decl::{DeclKind, Prototype};
+pub use decl::{Arg, DeclKind, Prototype};
 pub use expr::{Expr, ExprKind};
 pub use literals::Literal;
 pub use op::{BinaryOp, UnaryOp};
