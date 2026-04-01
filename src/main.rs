@@ -33,11 +33,11 @@ pub fn compile(
         }
     };
 
-    println!("{:?}", ast);
+    //println!("{:?}", ast);
 
     for decl in ast.iter() {
-        let _ = decl.codegen(codegen_builder)?;
-        //fn_value.print_to_stderr();
+        let fn_value = decl.codegen(codegen_builder)?;
+        fn_value.print_to_stderr();
         decl.compile(codegen_builder, jit)?;
     }
 

@@ -36,7 +36,6 @@ fn get_function<'ctx>(
     if let Some(callee) = context.module.get_function(name) {
         return Ok(callee);
     }
-    println!("{name}");
     let proto = context.function_protos.get(name);
     if let Some(proto) = proto {
         let proto = proto.clone();
@@ -707,7 +706,7 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
             DeclKind::Function { .. } => {
                 let executer_addr = jit.lookup("__anon_expr")?;
                 let res = jit.call(executer_addr);
-                println!("Evaluated to {res}");
+                println!("{res}");
                 jit.remove(rt)
             }
             _ => Ok(()),
