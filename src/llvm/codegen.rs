@@ -85,12 +85,12 @@ impl<'ctx> CodeGenBuilder<'ctx> {
     ) -> Result<CodeGenBuilder<'ctx>, CompilerError> {
         let module: Module = ctx.create_module("main");
 
-        let _ = Target::initialize_native(&InitializationConfig {
+        Target::initialize_all(&InitializationConfig {
             base: true,
             asm_printer: true,
             asm_parser: true,
             machine_code: true,
-            info: false,
+            info: true,
             disassembler: false,
         });
 
@@ -108,6 +108,12 @@ impl<'ctx> CodeGenBuilder<'ctx> {
                 CodeModel::Default,
             )
             .ok_or_else(|| CompilerError::Llvm("Unable to create a target machine".to_string()))?;
+
+        let target_data = target_machine.get_target_data();
+        let data_layout = target_data.get_data_layout();
+
+        module.set_data_layout(&data_layout);
+        module.set_triple(&triple);
 
         let builder = ctx.create_builder();
         let map = HashMap::new();
@@ -543,8 +549,8 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 let options = PassBuilderOptions::create();
 
-                if let Err(e) = context.module.run_passes(
-                    "function(mem2reg,instcombine,reassociate,gvn,simplifycfg)",
+                if let Err(e) = fn_value.run_passes(
+                    "mem2reg,instcombine,reassociate,gvn,simplifycfg",
                     &context.target_machine,
                     options,
                 ) {
