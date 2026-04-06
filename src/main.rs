@@ -61,7 +61,7 @@ fn main() -> Result<(), CompilerError> {
     binop_precedence.insert('-', 20);
     binop_precedence.insert('*', 40);
 
-    println!("Welcome to kaleipl. For help, type :help");
+    println!("Welcome to kaleipl.");
 
     loop {
         print!("{}", ">> ".yellow().bold());
