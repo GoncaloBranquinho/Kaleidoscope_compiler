@@ -3,4 +3,5 @@ pub type Type = Box<TypeKind>;
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeKind {
     F64,
+    I64,
 }

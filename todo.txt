@@ -1,0 +1,2 @@
+fix all the load instructions
+adapt the rest (possibly for loop and ifs) to use the new type int

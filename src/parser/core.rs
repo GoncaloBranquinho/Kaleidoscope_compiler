@@ -2,6 +2,7 @@ use std::{collections::HashMap, iter::Peekable};
 
 use crate::{
     lexer::{
+        Typ,
         core::{LexerError, TokenResult},
         keywords::Keyword::*,
         tokens::TokenKind,
@@ -71,7 +72,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                         kind = 2;
                         self.consume_token()?;
                         if let TokenKind::Number(n) = self.peek_token()? {
-                            let num: i32 = n.parse().unwrap();
+                            let num: i64 = n.into_int();
                             if !(1..=100).contains(&num) {
                                 return Err(ParserErrorKind::UnexpectedToken(TokenKind::Number(n)));
                             }
@@ -113,21 +114,37 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         let mut args = Vec::new();
 
         loop {
-            match self.peek_token()? {
+            let arg = match self.peek_token()? {
                 TokenKind::Identifier(i) => {
                     self.consume_token()?;
-                    args.push(Arg::new(i.clone(), Box::new(TypeKind::F64)));
+                    i
                 }
                 TokenKind::Op(')') => break,
                 t => return Err(ParserErrorKind::UnexpectedToken(t)),
-            }
+            };
+
+            let typ = match self.peek_token()? {
+                TokenKind::Op(':') => {
+                    self.consume_token()?;
+                    self.parse_type()?
+                }
+                t => return Err(ParserErrorKind::UnexpectedToken(t)),
+            };
+            args.push(Arg::new(arg.clone(), Box::new(typ)));
         }
 
         self.consume_token()?;
         if kind > 0 && args.len() != kind as usize {
             return Err(ParserErrorKind::InvalidSignatuere);
         }
-        Ok(Prototype::new(id, args))
+        let typ = match self.peek_token()? {
+            TokenKind::Op(':') => {
+                self.consume_token()?;
+                self.parse_type()?
+            }
+            t => return Err(ParserErrorKind::UnexpectedToken(t)),
+        };
+        Ok(Prototype::new(id, args, Box::new(typ)))
     }
 
     fn parse_extern(&mut self) -> Result<DeclKind, ParserErrorKind> {
@@ -144,7 +161,12 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
     fn parse_top_level_expr(&mut self) -> Result<DeclKind, ParserErrorKind> {
         let e = self.parse_expr()?;
-        let proto = Prototype::new("__anon_expr".to_string(), Vec::new());
+        // Add type inference?
+        let proto = Prototype::new(
+            "__anon_expr".to_string(),
+            Vec::new(),
+            Box::new(TypeKind::I64),
+        );
         Ok(DeclKind::Function(proto, e))
     }
 
@@ -317,7 +339,11 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
     fn parse_number(&mut self) -> Result<Expr, ParserErrorKind> {
         let number = self.consume_token()?;
-        let literal = Literal::F64(number.into_number().parse().unwrap());
+        let literal = match number {
+            TokenKind::Number(Typ::Double(n)) => Literal::F64(n),
+            TokenKind::Number(Typ::Int(n)) => Literal::I64(n),
+            _ => unimplemented!(),
+        };
         Ok(Box::new(literal.into()))
     }
 
@@ -352,7 +378,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
     fn parse_var(&mut self) -> Result<Expr, ParserErrorKind> {
         self.consume_token()?;
-        let mut vars: Vec<(String, Option<Expr>)> = Vec::new();
+        let mut vars: Vec<((String, TypeKind), Option<Expr>)> = Vec::new();
         let mut token = self.peek_token()?;
 
         if !matches!(token, TokenKind::Identifier(_)) {
@@ -361,6 +387,15 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
         loop {
             let name = self.consume_token()?.into_identifier();
+
+            let typ = match self.peek_token()? {
+                TokenKind::Op(':') => {
+                    self.consume_token()?;
+                    self.parse_type()?
+                }
+                t => return Err(ParserErrorKind::UnexpectedToken(t)),
+            };
+
             let init = match self.peek_token()? {
                 TokenKind::Op('=') => {
                     self.consume_token()?;
@@ -368,7 +403,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 }
                 _ => None,
             };
-            vars.push((name, init));
+            vars.push(((name, typ), init));
             if !matches!(self.peek_token()?, TokenKind::Op(',')) {
                 break;
             }
@@ -399,6 +434,20 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 self.errors.push(err);
                 let _ = self.consume_token();
             }
+        }
+    }
+
+    fn parse_type(&mut self) -> Result<TypeKind, ParserErrorKind> {
+        match self.peek_token()? {
+            TokenKind::Keyword(Double) => {
+                self.consume_token()?;
+                Ok(TypeKind::F64)
+            }
+            TokenKind::Keyword(Int) => {
+                self.consume_token()?;
+                Ok(TypeKind::I64)
+            }
+            t => return Err(ParserErrorKind::UnexpectedToken(t)),
         }
     }
 }

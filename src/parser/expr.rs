@@ -1,11 +1,11 @@
-use crate::parser::{BinaryOp, Literal, UnaryOp};
+use crate::parser::{BinaryOp, Literal, TypeKind, UnaryOp};
 
 pub type Expr = Box<ExprKind>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
     Identifier(String),
-    Var(Vec<(String, Option<Expr>)>, Expr),
+    Var(Vec<((String, TypeKind), Option<Expr>)>, Expr),
     Literal(Literal),
     Binary(BinaryOp, Expr, Expr),
     Unary(UnaryOp, Expr),

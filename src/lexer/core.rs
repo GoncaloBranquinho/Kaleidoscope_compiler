@@ -1,6 +1,6 @@
 use std::{iter::Peekable, str::CharIndices};
 
-use crate::lexer::{keywords::Keyword, tokens::TokenKind};
+use crate::lexer::{Typ, keywords::Keyword, tokens::TokenKind};
 
 pub type TokenResult = Result<TokenKind, LexerError>;
 
@@ -65,14 +65,28 @@ impl<'s> Iterator for Lexer<'s> {
             Some(n) if n.is_numeric() => {
                 let mut n_str = String::new();
                 while let Some(n) = self.peek_char() {
-                    if n.is_numeric() || n == '.' {
+                    if n.is_numeric() {
                         n_str.push(n);
                         self.next_char();
                     } else {
                         break;
                     }
                 }
-                Ok(TokenKind::Number(n_str))
+                if self.peek_char() == Some('.') {
+                    n_str.push('.');
+                    self.next_char();
+                    while let Some(n) = self.peek_char() {
+                        if n.is_numeric() {
+                            n_str.push(n);
+                            self.next_char();
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(TokenKind::Number(Typ::Double(n_str.parse().unwrap())))
+                } else {
+                    Ok(TokenKind::Number(Typ::Int(n_str.parse().unwrap())))
+                }
             }
             Some(op) => {
                 self.next_char();

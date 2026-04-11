@@ -4,7 +4,10 @@ use llvm_sys::error::{LLVMErrorRef, LLVMGetErrorMessage};
 use owo_colors::OwoColorize;
 use std::{ffi::CStr, fmt};
 
-use crate::{lexer::core::LexerError, parser::core::ParserErrorKind};
+use crate::{
+    lexer::core::LexerError, parser::core::ParserErrorKind,
+    semantics::type_checking::SemanticErrorKind,
+};
 
 #[derive(Debug)]
 pub enum CompilerError {
@@ -12,6 +15,7 @@ pub enum CompilerError {
     Lexer(LexerError),
     Parser(ParserErrorKind),
     Llvm(String),
+    Semantic(SemanticErrorKind),
 }
 
 impl fmt::Display for CompilerError {
@@ -21,6 +25,9 @@ impl fmt::Display for CompilerError {
             CompilerError::Lexer(error) => write!(f, "{}: {}", "error".red().bold(), error),
             CompilerError::Parser(error) => write!(f, "{}: {}", "error".red().bold(), error),
             CompilerError::Llvm(error) => write!(f, "{}: {}", "error".red().bold(), error),
+            CompilerError::Semantic(error) => {
+                write!(f, "{}: {}", "error".red().bold(), error)
+            }
         }
     }
 }
@@ -40,6 +47,18 @@ impl fmt::Display for ParserErrorKind {
             ParserErrorKind::UnexpectedToken(tok) => write!(f, "Unexpected token: {:?}", tok),
             ParserErrorKind::UnexpectedEof => write!(f, "Unexpected end of file"),
             ParserErrorKind::InvalidSignatuere => write!(f, "Invalid signature"),
+        }
+    }
+}
+
+impl fmt::Display for SemanticErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SemanticErrorKind::TypeMismatch { expected, found } => write!(
+                f,
+                "Type mismatch: expected: '{:?}', found: '{:?}'",
+                expected, found
+            ),
         }
     }
 }
@@ -68,6 +87,12 @@ impl From<LLVMString> for CompilerError {
 impl From<BuilderError> for CompilerError {
     fn from(error: BuilderError) -> Self {
         CompilerError::Llvm(format!("LLVM builder error: {:?}", error))
+    }
+}
+
+impl From<SemanticErrorKind> for CompilerError {
+    fn from(error: SemanticErrorKind) -> Self {
+        CompilerError::Semantic(error)
     }
 }
 

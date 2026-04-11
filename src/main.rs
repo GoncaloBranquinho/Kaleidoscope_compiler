@@ -33,7 +33,7 @@ pub fn compile(
         }
     };
 
-    //println!("{:?}", ast);
+    println!("{:?}", ast);
 
     for decl in ast.iter() {
         let fn_value = decl.codegen(codegen_builder)?;
