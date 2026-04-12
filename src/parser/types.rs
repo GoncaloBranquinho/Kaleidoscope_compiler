@@ -1,6 +1,6 @@
 pub type Type = Box<TypeKind>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TypeKind {
     F64,
     I64,

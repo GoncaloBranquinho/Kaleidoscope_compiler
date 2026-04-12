@@ -7,7 +7,7 @@ use crate::{
         keywords::Keyword::*,
         tokens::TokenKind,
     },
-    parser::{DeclKind, Expr, ExprKind, Literal, Program, Prototype, TypeKind, decl::Arg},
+    parser::{DeclKind, Expr, ExprKind, Literal, Program, Prototype, Type, TypeKind, decl::Arg},
 };
 
 pub struct Parser<'a, I: Iterator> {
@@ -130,7 +130,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 }
                 t => return Err(ParserErrorKind::UnexpectedToken(t)),
             };
-            args.push(Arg::new(arg.clone(), Box::new(typ)));
+            args.push(Arg::new(arg.clone(), typ));
         }
 
         self.consume_token()?;
@@ -144,7 +144,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         };
-        Ok(Prototype::new(id, args, Box::new(typ)))
+        Ok(Prototype::new(id, args, Some(typ)))
     }
 
     fn parse_extern(&mut self) -> Result<DeclKind, ParserErrorKind> {
@@ -162,11 +162,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     fn parse_top_level_expr(&mut self) -> Result<DeclKind, ParserErrorKind> {
         let e = self.parse_expr()?;
         // Add type inference?
-        let proto = Prototype::new(
-            "__anon_expr".to_string(),
-            Vec::new(),
-            Box::new(TypeKind::I64),
-        );
+        let proto = Prototype::new("__anon_expr".to_string(), Vec::new(), None);
         Ok(DeclKind::Function(proto, e))
     }
 
@@ -351,7 +347,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         let identifier = self.consume_token()?.into_identifier();
         let token = self.opt_peek_token()?;
         if token.is_none() || !matches!(token, Some(TokenKind::Op('('))) {
-            let expr_var = ExprKind::Identifier(identifier);
+            let expr_var = ExprKind::Identifier(identifier, None);
             return Ok(Box::new(expr_var));
         }
 
@@ -378,7 +374,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
     fn parse_var(&mut self) -> Result<Expr, ParserErrorKind> {
         self.consume_token()?;
-        let mut vars: Vec<((String, TypeKind), Option<Expr>)> = Vec::new();
+        let mut vars: Vec<((String, Option<Type>), Option<Expr>)> = Vec::new();
         let mut token = self.peek_token()?;
 
         if !matches!(token, TokenKind::Identifier(_)) {
@@ -391,9 +387,9 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             let typ = match self.peek_token()? {
                 TokenKind::Op(':') => {
                     self.consume_token()?;
-                    self.parse_type()?
+                    Some(self.parse_type()?)
                 }
-                t => return Err(ParserErrorKind::UnexpectedToken(t)),
+                _ => None,
             };
 
             let init = match self.peek_token()? {
@@ -437,15 +433,15 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         }
     }
 
-    fn parse_type(&mut self) -> Result<TypeKind, ParserErrorKind> {
+    fn parse_type(&mut self) -> Result<Type, ParserErrorKind> {
         match self.peek_token()? {
             TokenKind::Keyword(Double) => {
                 self.consume_token()?;
-                Ok(TypeKind::F64)
+                Ok(Box::new(TypeKind::F64))
             }
             TokenKind::Keyword(Int) => {
                 self.consume_token()?;
-                Ok(TypeKind::I64)
+                Ok(Box::new(TypeKind::I64))
             }
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         }

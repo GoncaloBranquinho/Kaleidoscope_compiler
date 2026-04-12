@@ -1,2 +1,2 @@
-fix all the load instructions
-adapt the rest (possibly for loop and ifs) to use the new type int
+allow double expressions on if conds
+make sure that test.klpl works again (just allow doubles on if conds)

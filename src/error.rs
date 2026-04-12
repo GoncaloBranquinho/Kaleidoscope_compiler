@@ -59,6 +59,25 @@ impl fmt::Display for SemanticErrorKind {
                 "Type mismatch: expected: '{:?}', found: '{:?}'",
                 expected, found
             ),
+            SemanticErrorKind::UndefinedVariable { name } => {
+                write!(f, "Undefined variable: '{:?}'", name)
+            }
+            SemanticErrorKind::UninitializedVariable { name } => {
+                write!(f, "Uninitialized variable: '{:?}'", name)
+            }
+            SemanticErrorKind::InvalidArgumentSize { expected, found } => {
+                write!(
+                    f,
+                    "Invalid number of arguments: expected: '{:?}', found: '{:?}'",
+                    expected, found
+                )
+            }
+            SemanticErrorKind::UnknownFunction { name } => {
+                write!(f, "Unknown function: '{:?}'", name)
+            }
+            SemanticErrorKind::UnknownOperator { name } => {
+                write!(f, "Unknown operator: '{:?}'", name)
+            }
         }
     }
 }

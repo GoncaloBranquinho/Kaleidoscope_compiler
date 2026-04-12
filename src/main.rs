@@ -1,7 +1,7 @@
 use inkwell::context::Context;
 use kaleipl::{
-    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, lexer::Lexer,
-    parser::Parser,
+    CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, TypeCheck, lexer::Lexer,
+    parser::Parser, semantics::type_checking::SymbolTable,
 };
 use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
@@ -15,6 +15,7 @@ pub fn compile(
     codegen_builder: &mut CodeGenBuilder,
     jit: &mut KaleidoscopeJIT,
     binop_precedence: &mut HashMap<char, i8>,
+    symbol_table: &mut SymbolTable,
 ) -> Result<(), CompilerError> {
     let lexer = Lexer::new(content.char_indices().peekable());
     /*let tokens: Result<Vec<kaleipl::lexer::tokens::TokenKind>, kaleipl::lexer::core::LexerError> =
@@ -23,7 +24,7 @@ pub fn compile(
     println!("{tokens:?}");
     return Ok(());*/
     let mut parser = Parser::new(lexer, binop_precedence);
-    let ast = match parser.parse_program() {
+    let mut ast = match parser.parse_program() {
         Ok(a) => a,
         Err(errors) => {
             for e in errors {
@@ -33,7 +34,11 @@ pub fn compile(
         }
     };
 
-    println!("{:?}", ast);
+    println!("Before type checknig: {:?}", ast);
+
+    ast.type_check(symbol_table)?;
+
+    println!("After type checking: {:?}", ast);
 
     for decl in ast.iter() {
         let fn_value = decl.codegen(codegen_builder)?;
@@ -61,6 +66,8 @@ fn main() -> Result<(), CompilerError> {
     binop_precedence.insert('-', 20);
     binop_precedence.insert('*', 40);
 
+    let mut symbol_table = SymbolTable::new();
+
     println!("Welcome to kaleipl.");
 
     loop {
@@ -74,6 +81,7 @@ fn main() -> Result<(), CompilerError> {
             &mut codegen_builder,
             &mut jit,
             &mut binop_precedence,
+            &mut symbol_table,
         ) {
             eprintln!("{error}");
         }

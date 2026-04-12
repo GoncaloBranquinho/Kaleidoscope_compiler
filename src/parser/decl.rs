@@ -16,11 +16,11 @@ impl Arg {
 pub struct Prototype {
     pub name: String,
     pub args: Vec<Arg>,
-    pub ret_type: Type,
+    pub ret_type: Option<Type>,
 }
 
 impl Prototype {
-    pub fn new(name: String, args: Vec<Arg>, ret_type: Type) -> Self {
+    pub fn new(name: String, args: Vec<Arg>, ret_type: Option<Type>) -> Self {
         Prototype {
             name,
             args,

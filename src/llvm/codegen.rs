@@ -7,8 +7,6 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::passes::PassBuilderOptions;
-use inkwell::support::error_handling::reset_fatal_error_handler;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{
@@ -27,7 +25,6 @@ use llvm_sys::orc2::{
 };
 
 use crate::error::CompilerError;
-use crate::lexer::Typ;
 use crate::parser::op::BinaryOp;
 use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, TypeKind, UnaryOp};
 
@@ -155,11 +152,20 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .as_basic_value_enum())
             }
 
-            ExprKind::Identifier(name) => {
+            ExprKind::Identifier(name, typ) => {
                 if let Some(value) = context.map.get(name) {
-                    Ok(context
-                        .builder
-                        .build_load(context.ctx.f64_type(), *value, name)?)
+                    match typ.clone().unwrap().as_ref() {
+                        TypeKind::F64 => {
+                            Ok(context
+                                .builder
+                                .build_load(context.ctx.f64_type(), *value, name)?)
+                        }
+                        TypeKind::I64 => {
+                            Ok(context
+                                .builder
+                                .build_load(context.ctx.i64_type(), *value, name)?)
+                        }
+                    }
                 } else {
                     Err(CompilerError::Llvm(format!(
                         "Unknown variable name: {}",
@@ -179,13 +185,18 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 })?;
 
                 for ((name, typ), init) in vars.clone() {
+                    if typ.is_none() {
+                        old_bindings.push(None);
+                        continue;
+                    }
                     let init_val = if let Some(init_val) = init {
                         init_val.codegen(context)?
                     } else {
                         context.ctx.i64_type().const_zero().into()
                     };
 
-                    let alloca = create_entry_block_alloca(context, function, &name, &typ)?;
+                    let alloca =
+                        create_entry_block_alloca(context, function, &name, &typ.unwrap())?;
                     context.builder.build_store(alloca, init_val)?;
                     old_bindings.push(context.map.insert(name, alloca));
                 }
@@ -230,7 +241,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 
             ExprKind::Binary(op, left, right) => {
                 if let BinaryOp::Assign = op {
-                    let s = if let ExprKind::Identifier(s) = left.as_ref() {
+                    let s = if let ExprKind::Identifier(s, _) = left.as_ref() {
                         s
                     } else {
                         return Err(CompilerError::Llvm(
@@ -252,24 +263,29 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         let res = match op {
                             BinaryOp::Add => context
                                 .builder
-                                .build_float_add(value_l, value_r, "addtmp")?,
+                                .build_float_add(value_l, value_r, "addtmp")?
+                                .as_basic_value_enum(),
                             BinaryOp::Sub => context
                                 .builder
-                                .build_float_sub(value_l, value_r, "subtmp")?,
+                                .build_float_sub(value_l, value_r, "subtmp")?
+                                .as_basic_value_enum(),
                             BinaryOp::Mult => context
                                 .builder
-                                .build_float_mul(value_l, value_r, "multmp")?,
+                                .build_float_mul(value_l, value_r, "multmp")?
+                                .as_basic_value_enum(),
                             BinaryOp::Lt => {
-                                let f64_type = context.ctx.f64_type();
-                                let cmp = context.builder.build_float_compare(
-                                    FloatPredicate::ULT,
-                                    value_l,
-                                    value_r,
-                                    "cmptmp",
-                                )?;
                                 context
                                     .builder
-                                    .build_unsigned_int_to_float(cmp, f64_type, "booltmp")?
+                                    .build_float_compare(
+                                        FloatPredicate::ULT,
+                                        value_l,
+                                        value_r,
+                                        "cmptmp",
+                                    )?
+                                    .as_basic_value_enum()
+                                /*context
+                                .builder
+                                .build_unsigned_int_to_float(cmp, f64_type, "booltmp")?*/
                             }
                             BinaryOp::UserDefined(op) => {
                                 let mut fn_name = "binary".to_string();
@@ -285,13 +301,13 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                         "Expected function to return a value".to_string(),
                                     ),
                                 )?;
-                                value.into_float_value()
+                                value.into_float_value().as_basic_value_enum()
                             }
                             BinaryOp::Assign => unreachable!(
                                 "Temporary: this code is unreachable until semantic analysis is implemented. It will be removed afterwards"
                             ),
                         };
-                        Ok(res.into())
+                        Ok(res)
                     }
                     (BasicValueEnum::IntValue(value_l), BasicValueEnum::IntValue(value_r)) => {
                         let res = match op {
@@ -358,7 +374,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         let value = v.try_as_basic_value().basic().ok_or(CompilerError::Llvm(
                             "Expected function to return a value".to_string(),
                         ))?;
-                        Ok(value.into_float_value().into())
+                        Ok(value)
                     }
                     Err(e) => Err(e.into()),
                 }
@@ -415,7 +431,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 
                 // Codegen merge_basic_block
                 context.builder.position_at_end(merge_bb);
-                let phi_node = context.builder.build_phi(context.ctx.f64_type(), "iftmp")?;
+                let phi_node = context.builder.build_phi(then_v.get_type(), "iftmp")?;
 
                 let then_v: &dyn BasicValue = &then_v;
                 let else_v: &dyn BasicValue = &else_v;
@@ -439,24 +455,42 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let alloca =
                     create_entry_block_alloca(context, function, var_name, &TypeKind::I64)?;
 
+                let old_v = context.map.insert(var_name.clone(), alloca);
+
                 let start_v = start.codegen(context)?;
 
                 context.builder.build_store(alloca, start_v)?;
 
-                let loop_bb = context.ctx.append_basic_block(function, "loop");
+                let loop_cond_bb = context.ctx.append_basic_block(function, "loop_cond");
 
-                context.builder.build_unconditional_branch(loop_bb)?;
+                context.builder.build_unconditional_branch(loop_cond_bb)?;
+                context.builder.position_at_end(loop_cond_bb);
+
+                let end_cond = if let BasicValueEnum::IntValue(end_cond) = end.codegen(context)? {
+                    end_cond
+                } else {
+                    return Err(CompilerError::Llvm(
+                        "Expected condition to be of type Int".to_string(),
+                    ));
+                };
+
+                let loop_bb = context.ctx.append_basic_block(function, "loop_bb");
+
+                let after_bb = context.ctx.append_basic_block(function, "afterloop");
+
+                context
+                    .builder
+                    .build_conditional_branch(end_cond, loop_bb, after_bb)?;
+
                 context.builder.position_at_end(loop_bb);
-
-                let old_v = context.map.insert(var_name.clone(), alloca);
 
                 body.codegen(context)?;
 
                 let step_v = if let Some(s) = step {
                     s.codegen(context)?
                 } else {
-                    let f64_type = context.ctx.f64_type();
-                    f64_type.const_float(1.0).as_basic_value_enum()
+                    let i64_type = context.ctx.i64_type();
+                    i64_type.const_int(1, false).as_basic_value_enum()
                 };
 
                 let step_v_as_f = if let BasicValueEnum::IntValue(step_v_as_f) = step_v {
@@ -467,18 +501,10 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     ));
                 };
 
-                let end_cond = if let BasicValueEnum::IntValue(end_cond) = end.codegen(context)? {
-                    end_cond
-                } else {
-                    return Err(CompilerError::Llvm(
-                        "Expected condition to be of type Int".to_string(),
-                    ));
-                };
-
                 let cur_var =
                     context
                         .builder
-                        .build_load(context.ctx.f64_type(), alloca, var_name)?;
+                        .build_load(context.ctx.i64_type(), alloca, var_name)?;
 
                 let cur_v_as_f = if let BasicValueEnum::IntValue(cur_v_as_f) = cur_var {
                     cur_v_as_f
@@ -494,18 +520,8 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 
                 context.builder.build_store(alloca, next_v)?;
 
-                let end_cond = context.builder.build_int_compare(
-                    IntPredicate::NE,
-                    end_cond,
-                    context.ctx.i64_type().const_zero(),
-                    "loopcond",
-                )?;
+                context.builder.build_unconditional_branch(loop_cond_bb)?;
 
-                let after_bb = context.ctx.append_basic_block(function, "afterloop");
-
-                context
-                    .builder
-                    .build_conditional_branch(end_cond, loop_bb, after_bb)?;
                 context.builder.position_at_end(after_bb);
 
                 if let Some(val) = old_v {
@@ -514,7 +530,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     context.map.remove(var_name);
                 }
 
-                Ok(context.ctx.f64_type().const_zero().as_basic_value_enum())
+                Ok(context.ctx.i64_type().const_zero().as_basic_value_enum())
             }
         }
     }
@@ -533,9 +549,10 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
             };
             args_type.push(arg_type.into());
         }
-        let ret_type = match self.ret_type.as_ref() {
-            TypeKind::F64 => f64_type.as_basic_type_enum(),
-            TypeKind::I64 => i64_type.as_basic_type_enum(),
+        let ret_type = match self.ret_type.as_deref() {
+            Some(TypeKind::F64) => f64_type.as_basic_type_enum(),
+            Some(TypeKind::I64) => i64_type.as_basic_type_enum(),
+            None => unimplemented!(),
         };
         let fn_type = ret_type.fn_type(&args_type, false);
 
@@ -690,7 +707,7 @@ impl KaleidoscopeJIT {
         }
     }
 
-    fn call<T>(&self, addr: LLVMOrcExecutorAddress, ret_type: &TypeKind) -> T {
+    fn call<T>(&self, addr: LLVMOrcExecutorAddress) -> T {
         unsafe {
             let function: extern "C" fn() -> T = transmute(addr as usize);
             function()
@@ -756,7 +773,7 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
 
                         let tsm = LLVMOrcCreateNewThreadSafeModule(ptr, *codegen_builder.tsc);
                         jit.add_module(tsm, rt)?;
-                        self.run(rt, jit, proto.ret_type.as_ref())
+                        self.run(rt, jit, proto.ret_type.as_deref().unwrap())
                     }
                 } else {
                     unsafe {
@@ -793,11 +810,11 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
                 let executer_addr = jit.lookup("__anon_expr")?;
                 match ret_type {
                     TypeKind::F64 => {
-                        let res = jit.call::<f64>(executer_addr, ret_type);
+                        let res = jit.call::<f64>(executer_addr);
                         println!("{res}");
                     }
                     TypeKind::I64 => {
-                        let res = jit.call::<i64>(executer_addr, ret_type);
+                        let res = jit.call::<i64>(executer_addr);
                         println!("{res}");
                     }
                 }
