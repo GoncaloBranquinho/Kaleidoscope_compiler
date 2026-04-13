@@ -52,6 +52,12 @@ impl SymbolTable {
     }
 }
 
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait TypeCheck {
     type Output;
     fn type_check(
@@ -107,13 +113,15 @@ impl TypeCheck for DeclKind {
                 symbol_table.push();
                 prototype.type_check(symbol_table)?;
                 let body_type = body.type_check(symbol_table)?;
-                if prototype.ret_type.is_none() {
+                if let Some(ret_type) = &prototype.ret_type {
+                    if ret_type != &body_type {
+                        return Err(SemanticErrorKind::TypeMismatch {
+                            expected: prototype.ret_type.clone().unwrap(),
+                            found: body_type,
+                        });
+                    }
+                } else {
                     prototype.ret_type = Some(body_type);
-                } else if *prototype.ret_type.as_ref().unwrap() != body_type {
-                    return Err(SemanticErrorKind::TypeMismatch {
-                        expected: prototype.ret_type.clone().unwrap(),
-                        found: body_type,
-                    });
                 }
                 symbol_table.pop();
             }
@@ -162,32 +170,32 @@ impl TypeCheck for Expr {
             ExprKind::Var(vars, body) => {
                 symbol_table.push();
                 for var in vars.iter_mut() {
-                    if let Some(body) = var.1.as_mut() {
-                        let body_type = body.type_check(symbol_table)?;
-                        if let Some(var_type) = var.0.1.as_ref() {
-                            if var_type != &body_type {
-                                return Err(SemanticErrorKind::TypeMismatch {
-                                    expected: var_type.clone(),
-                                    found: body_type,
-                                });
-                            }
+                    if let Some(var_body) = var.val.as_mut() {
+                        let body_type = var_body.type_check(symbol_table)?;
+                        if let Some(var_type) = var.t.as_ref()
+                            && var_type != &body_type
+                        {
+                            return Err(SemanticErrorKind::TypeMismatch {
+                                expected: var_type.clone(),
+                                found: body_type,
+                            });
                         }
                         symbol_table.insert(
-                            var.0.0.clone(),
+                            var.name.clone(),
                             Some(body_type.clone()),
                             symbol_table.len() - 1,
                         );
-                        var.0.1 = Some(body_type);
+                        var.t = Some(body_type);
                     } else {
-                        symbol_table.insert(var.0.0.clone(), None, symbol_table.len() - 1);
+                        symbol_table.insert(var.name.clone(), None, symbol_table.len() - 1);
                     }
                 }
                 let body_type = body.type_check(symbol_table);
                 for var in vars.iter_mut() {
-                    if var.0.1.is_none() {
-                        if let (Some(Some(typ)), _) = symbol_table.get(&var.0.0) {
-                            var.0.1 = Some(typ.clone());
-                        }
+                    if var.t.is_none()
+                        && let (Some(Some(typ)), _) = symbol_table.get(&var.name)
+                    {
+                        var.t = Some(typ.clone());
                     }
                 }
                 symbol_table.pop();
@@ -219,7 +227,7 @@ impl TypeCheck for Expr {
                     } else {
                         unimplemented!()
                     };
-                    let (id_typ, scope) = symbol_table.get(&name);
+                    let (id_typ, scope) = symbol_table.get(name);
                     if let Some(Some(typ)) = id_typ {
                         let right_type = right.type_check(symbol_table)?;
                         if right_type != typ {
@@ -238,7 +246,7 @@ impl TypeCheck for Expr {
                         );
                         Ok(right_type)
                     } else {
-                        return Err(SemanticErrorKind::UndefinedVariable { name: name.clone() });
+                        Err(SemanticErrorKind::UndefinedVariable { name: name.clone() })
                     }
                 }
                 BinaryOp::UserDefined(c) => {
@@ -291,7 +299,7 @@ impl TypeCheck for Expr {
                 symbol_table.push();
                 let expr2_type = expr2.type_check(symbol_table)?;
                 symbol_table.pop();
-                if cond_type.as_ref() != &TypeKind::I64 {
+                if !matches!(cond_type.as_ref(), &TypeKind::I64 | &TypeKind::F64) {
                     Err(SemanticErrorKind::TypeMismatch {
                         expected: Box::new(TypeKind::I64),
                         found: cond_type,
@@ -330,14 +338,8 @@ impl TypeCheck for Expr {
             ExprKind::ForLoop(id, start, end, step, body) => {
                 symbol_table.push();
                 let start_type = start.type_check(symbol_table)?;
-                if start_type.as_ref() != &TypeKind::I64 {
-                    return Err(SemanticErrorKind::TypeMismatch {
-                        expected: Box::new(TypeKind::I64),
-                        found: start_type,
-                    });
-                }
 
-                symbol_table.insert(id.clone(), Some(start_type), symbol_table.len() - 1);
+                symbol_table.insert(id.clone(), Some(start_type.clone()), symbol_table.len() - 1);
 
                 let end_type = end.type_check(symbol_table)?;
                 if end_type.as_ref() != &TypeKind::I64 {
@@ -349,9 +351,9 @@ impl TypeCheck for Expr {
 
                 if let Some(step) = step {
                     let step_type = step.type_check(symbol_table)?;
-                    if step_type.as_ref() != &TypeKind::I64 {
+                    if step_type != start_type {
                         return Err(SemanticErrorKind::TypeMismatch {
-                            expected: Box::new(TypeKind::I64),
+                            expected: start_type,
                             found: step_type,
                         });
                     }

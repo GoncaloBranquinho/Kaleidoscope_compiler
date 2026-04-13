@@ -7,8 +7,9 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
-use inkwell::types::{BasicMetadataTypeEnum, BasicType};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
@@ -51,7 +52,7 @@ fn create_entry_block_alloca<'ctx>(
     context: &mut CodeGenBuilder<'ctx>,
     fn_value: FunctionValue<'ctx>,
     var_name: &str,
-    t: &TypeKind,
+    t: BasicTypeEnum<'ctx>,
 ) -> Result<PointerValue<'ctx>, CompilerError> {
     let builder = context.ctx.create_builder();
     let block = fn_value
@@ -61,11 +62,7 @@ fn create_entry_block_alloca<'ctx>(
     if let Some(inst) = block.get_first_instruction() {
         builder.position_before(&inst);
     }
-    let alloca_t = match t {
-        TypeKind::F64 => context.ctx.f64_type().as_basic_type_enum(),
-        TypeKind::I64 => context.ctx.i64_type().as_basic_type_enum(),
-    };
-    Ok(builder.build_alloca(alloca_t, var_name)?)
+    Ok(builder.build_alloca(t, var_name)?)
 }
 
 pub struct CodeGenBuilder<'ctx> {
@@ -184,28 +181,39 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     CompilerError::Llvm("Basic Block has no parent function".to_string())
                 })?;
 
-                for ((name, typ), init) in vars.clone() {
-                    if typ.is_none() {
+                for var in vars.clone() {
+                    if var.t.is_none() {
                         old_bindings.push(None);
                         continue;
                     }
-                    let init_val = if let Some(init_val) = init {
+                    let init_val = if let Some(init_val) = var.val {
                         init_val.codegen(context)?
                     } else {
-                        context.ctx.i64_type().const_zero().into()
+                        match var.t.unwrap().as_ref() {
+                            TypeKind::I64 => {
+                                context.ctx.i64_type().const_zero().as_basic_value_enum()
+                            }
+                            TypeKind::F64 => {
+                                context.ctx.f64_type().const_zero().as_basic_value_enum()
+                            }
+                        }
                     };
 
-                    let alloca =
-                        create_entry_block_alloca(context, function, &name, &typ.unwrap())?;
+                    let alloca = create_entry_block_alloca(
+                        context,
+                        function,
+                        &var.name,
+                        init_val.get_type(),
+                    )?;
                     context.builder.build_store(alloca, init_val)?;
-                    old_bindings.push(context.map.insert(name, alloca));
+                    old_bindings.push(context.map.insert(var.name, alloca));
                 }
                 let body = body.codegen(context)?;
                 for i in 0..vars.len() {
                     if let Some(binding) = old_bindings[i] {
-                        context.map.insert(vars[i].0.0.clone(), binding);
+                        context.map.insert(vars[i].name.clone(), binding);
                     } else {
-                        context.map.remove(&vars[i].0.0);
+                        context.map.remove(&vars[i].name);
                     }
                 }
                 Ok(body)
@@ -381,20 +389,23 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
 
             ExprKind::IfThenElse(cond, fst, snd) => {
-                let cond_v = if let BasicValueEnum::IntValue(cond_v) = cond.codegen(context)? {
-                    cond_v
-                } else {
-                    return Err(CompilerError::Llvm(
-                        "Expected condition to be of type int".to_string(),
-                    ));
-                };
+                let cond_v = cond.codegen(context)?;
 
-                let cond_v = context.builder.build_int_compare(
-                    IntPredicate::NE,
-                    cond_v,
-                    context.ctx.i64_type().const_zero(),
-                    "ifcond",
-                )?;
+                let cond_v = match cond_v {
+                    BasicValueEnum::IntValue(cond_v) => context.builder.build_int_compare(
+                        IntPredicate::NE,
+                        cond_v,
+                        cond_v.get_type().const_zero(),
+                        "ifcond",
+                    )?,
+                    BasicValueEnum::FloatValue(cond_v) => context.builder.build_float_compare(
+                        FloatPredicate::ONE,
+                        cond_v,
+                        cond_v.get_type().const_zero(),
+                        "ifcond",
+                    )?,
+                    _ => unimplemented!(),
+                };
                 let block = context
                     .builder
                     .get_insert_block()
@@ -452,12 +463,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     CompilerError::Llvm("Basic Block has no parent function".to_string())
                 })?;
 
+                let start_v = start.codegen(context)?;
+
                 let alloca =
-                    create_entry_block_alloca(context, function, var_name, &TypeKind::I64)?;
+                    create_entry_block_alloca(context, function, var_name, start_v.get_type())?;
 
                 let old_v = context.map.insert(var_name.clone(), alloca);
-
-                let start_v = start.codegen(context)?;
 
                 context.builder.build_store(alloca, start_v)?;
 
@@ -489,34 +500,32 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let step_v = if let Some(s) = step {
                     s.codegen(context)?
                 } else {
-                    let i64_type = context.ctx.i64_type();
-                    i64_type.const_int(1, false).as_basic_value_enum()
+                    match start_v.get_type() {
+                        BasicTypeEnum::IntType(t) => t.const_int(1, false).as_basic_value_enum(),
+                        BasicTypeEnum::FloatType(t) => t.const_float(1.0).as_basic_value_enum(),
+                        _ => unimplemented!(),
+                    }
                 };
 
-                let step_v_as_f = if let BasicValueEnum::IntValue(step_v_as_f) = step_v {
-                    step_v_as_f
-                } else {
-                    return Err(CompilerError::Llvm(
-                        "Step value must be of type int".to_string(),
-                    ));
+                let cur_var = match start_v.get_type() {
+                    BasicTypeEnum::IntType(t) => context.builder.build_load(t, alloca, var_name)?,
+                    BasicTypeEnum::FloatType(t) => {
+                        context.builder.build_load(t, alloca, var_name)?
+                    }
+                    _ => unimplemented!(),
                 };
 
-                let cur_var =
-                    context
+                let next_v = match (step_v, cur_var) {
+                    (BasicValueEnum::IntValue(a), BasicValueEnum::IntValue(b)) => context
                         .builder
-                        .build_load(context.ctx.i64_type(), alloca, var_name)?;
-
-                let cur_v_as_f = if let BasicValueEnum::IntValue(cur_v_as_f) = cur_var {
-                    cur_v_as_f
-                } else {
-                    return Err(CompilerError::Llvm(
-                        "Pointer value must be of type int".to_string(),
-                    ));
+                        .build_int_add(a, b, "nextvar")?
+                        .as_basic_value_enum(),
+                    (BasicValueEnum::FloatValue(a), BasicValueEnum::FloatValue(b)) => context
+                        .builder
+                        .build_float_add(a, b, "nextvar")?
+                        .as_basic_value_enum(),
+                    _ => unimplemented!(),
                 };
-
-                let next_v = context
-                    .builder
-                    .build_int_add(cur_v_as_f, step_v_as_f, "nextvar")?;
 
                 context.builder.build_store(alloca, next_v)?;
 
@@ -530,7 +539,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     context.map.remove(var_name);
                 }
 
-                Ok(context.ctx.i64_type().const_zero().as_basic_value_enum())
+                Ok(context.ctx.f64_type().const_zero().as_basic_value_enum())
             }
         }
     }
@@ -607,7 +616,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                         context,
                         fn_value,
                         &proto.args[i].name,
-                        &proto.args[i].typ.as_ref(),
+                        fn_value.get_nth_param(i as u32).unwrap().get_type(),
                     )?;
                     context.builder.build_store(alloca, arg)?;
                     context
@@ -642,7 +651,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 // optimizing the newly created function
 
-                /*let options = PassBuilderOptions::create();
+                let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -650,7 +659,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }*/
+                }
 
                 Ok(fn_value)
             }

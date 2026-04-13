@@ -7,7 +7,10 @@ use crate::{
         keywords::Keyword::*,
         tokens::TokenKind,
     },
-    parser::{DeclKind, Expr, ExprKind, Literal, Program, Prototype, Type, TypeKind, decl::Arg},
+    parser::{
+        DeclKind, Expr, ExprKind, Literal, Program, Prototype, Type, TypeKind, decl::Arg,
+        expr::VarInfo,
+    },
 };
 
 pub struct Parser<'a, I: Iterator> {
@@ -374,7 +377,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
 
     fn parse_var(&mut self) -> Result<Expr, ParserErrorKind> {
         self.consume_token()?;
-        let mut vars: Vec<((String, Option<Type>), Option<Expr>)> = Vec::new();
+        let mut vars: Vec<VarInfo> = Vec::new();
         let mut token = self.peek_token()?;
 
         if !matches!(token, TokenKind::Identifier(_)) {
@@ -399,7 +402,11 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 }
                 _ => None,
             };
-            vars.push(((name, typ), init));
+            vars.push(VarInfo {
+                name,
+                t: typ,
+                val: init,
+            });
             if !matches!(self.peek_token()?, TokenKind::Op(',')) {
                 break;
             }
@@ -443,7 +450,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 self.consume_token()?;
                 Ok(Box::new(TypeKind::I64))
             }
-            t => return Err(ParserErrorKind::UnexpectedToken(t)),
+            t => Err(ParserErrorKind::UnexpectedToken(t)),
         }
     }
 }

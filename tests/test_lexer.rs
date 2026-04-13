@@ -1,4 +1,4 @@
-use kaleipl::lexer::{Lexer, core::TokenResult, keywords::Keyword::*, tokens::TokenKind::*};
+use kaleipl::lexer::{Lexer, Typ, core::TokenResult, keywords::Keyword::*, tokens::TokenKind::*};
 
 fn assert_tokens(lexer: &mut Lexer, tokens: &[TokenResult]) {
     for (i, token) in lexer.enumerate() {
@@ -11,9 +11,9 @@ fn test_valid_tokens() {
     let input = "1 1.0 1. if then else for in def extern olaaaa x XSSAS l s + - **? ~";
     let mut lexer = Lexer::new(input.char_indices().peekable());
     let tokens: Vec<TokenResult> = vec![
-        Ok(Number("1".to_string())),
-        Ok(Number("1.0".to_string())),
-        Ok(Number("1.".to_string())),
+        Ok(Number(Typ::Int(1))),
+        Ok(Number(Typ::Double(1.0))),
+        Ok(Number(Typ::Double(1.))),
         Ok(Keyword(If)),
         Ok(Keyword(Then)),
         Ok(Keyword(Else)),
@@ -95,7 +95,7 @@ fn test_for() {
         Ok(Op(':')),
         Ok(Identifier("putchard".to_string())),
         Ok(Op('(')),
-        Ok(Number("10".to_string())),
+        Ok(Number(Typ::Int(10))),
         Ok(Op(')')),
         Ok(Op(')')),
         Ok(Op(';')),
@@ -125,7 +125,7 @@ fn test_if() {
         Ok(Keyword(If)),
         Ok(Identifier("iters".to_string())),
         Ok(Op('>')),
-        Ok(Number("255".to_string())),
+        Ok(Number(Typ::Int(255))),
         Ok(Op('|')),
         Ok(Op('(')),
         Ok(Identifier("real".to_string())),
@@ -136,7 +136,7 @@ fn test_if() {
         Ok(Op('*')),
         Ok(Identifier("imag".to_string())),
         Ok(Op('>')),
-        Ok(Number("4".to_string())),
+        Ok(Number(Typ::Int(4))),
         Ok(Op(')')),
         Ok(Keyword(Then)),
         Ok(Identifier("iters".to_string())),
@@ -153,7 +153,7 @@ fn test_if() {
         Ok(Op('+')),
         Ok(Identifier("creal".to_string())),
         Ok(Op(',')),
-        Ok(Number("2".to_string())),
+        Ok(Number(Typ::Int(2))),
         Ok(Op('*')),
         Ok(Identifier("real".to_string())),
         Ok(Op('*')),
@@ -163,7 +163,7 @@ fn test_if() {
         Ok(Op(',')),
         Ok(Identifier("iters".to_string())),
         Ok(Op('+')),
-        Ok(Number("1".to_string())),
+        Ok(Number(Typ::Int(1))),
         Ok(Op(',')),
         Ok(Identifier("creal".to_string())),
         Ok(Op(',')),

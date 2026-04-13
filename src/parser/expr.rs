@@ -5,13 +5,20 @@ pub type Expr = Box<ExprKind>;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExprKind {
     Identifier(String, Option<Type>),
-    Var(Vec<((String, Option<Type>), Option<Expr>)>, Expr),
+    Var(Vec<VarInfo>, Expr),
     Literal(Literal),
     Binary(BinaryOp, Expr, Expr),
     Unary(UnaryOp, Expr),
     IfThenElse(Expr, Expr, Expr),
     Call(String, Vec<Expr>),
     ForLoop(String, Expr, Expr, Option<Expr>, Expr),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct VarInfo {
+    pub name: String,
+    pub t: Option<Type>,
+    pub val: Option<Expr>,
 }
 
 impl From<Literal> for ExprKind {

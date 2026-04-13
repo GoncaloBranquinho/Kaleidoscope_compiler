@@ -38,11 +38,11 @@ pub fn compile(
 
     ast.type_check(symbol_table)?;
 
-    println!("After type checking: {:?}", ast);
+    //println!("After type checking: {:?}", ast);
 
     for decl in ast.iter() {
-        let fn_value = decl.codegen(codegen_builder)?;
-        fn_value.print_to_stderr();
+        let _ = decl.codegen(codegen_builder)?;
+        //fn_value.print_to_stderr();
         decl.compile(codegen_builder, jit)?;
     }
 
