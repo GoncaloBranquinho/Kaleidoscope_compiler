@@ -32,8 +32,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "inkwell"
-version = "0.8.0"
-source = "git+https://github.com/GoncaloBranquinho/inkwell.git?branch=master#832a4487ee4010a957f5143c7d92242d2ffa22a5"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7decbc9dfa45a4a827a6ff7b822c113b1285678a937e84213417d4ca8a095782"
 dependencies = [
  "bitflags",
  "inkwell_internals",
@@ -44,8 +45,9 @@ dependencies = [
 
 [[package]]
 name = "inkwell_internals"
-version = "0.13.0"
-source = "git+https://github.com/GoncaloBranquinho/inkwell.git?branch=master#832a4487ee4010a957f5143c7d92242d2ffa22a5"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cfe97ee860815a90ed17e09639513269e39420a7440f3f4c996f238c514cf8d"
 dependencies = [
  "proc-macro2",
  "quote",
