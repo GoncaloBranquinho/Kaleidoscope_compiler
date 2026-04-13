@@ -282,18 +282,16 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                 .build_float_mul(value_l, value_r, "multmp")?
                                 .as_basic_value_enum(),
                             BinaryOp::Lt => {
+                                let cmp = context.builder.build_float_compare(
+                                    FloatPredicate::ULT,
+                                    value_l,
+                                    value_r,
+                                    "cmptmp",
+                                )?;
                                 context
                                     .builder
-                                    .build_float_compare(
-                                        FloatPredicate::ULT,
-                                        value_l,
-                                        value_r,
-                                        "cmptmp",
-                                    )?
+                                    .build_int_z_extend(cmp, context.ctx.i64_type(), "booltmp")?
                                     .as_basic_value_enum()
-                                /*context
-                                .builder
-                                .build_unsigned_int_to_float(cmp, f64_type, "booltmp")?*/
                             }
                             BinaryOp::UserDefined(op) => {
                                 let mut fn_name = "binary".to_string();
@@ -328,12 +326,20 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                             BinaryOp::Mult => {
                                 context.builder.build_int_mul(value_l, value_r, "multmp")?
                             }
-                            BinaryOp::Lt => context.builder.build_int_compare(
-                                IntPredicate::SLT,
-                                value_l,
-                                value_r,
-                                "booltmp",
-                            )?,
+                            BinaryOp::Lt => {
+                                let cmp = context.builder.build_int_compare(
+                                    IntPredicate::SLT,
+                                    value_l,
+                                    value_r,
+                                    "cmptmp",
+                                )?;
+
+                                context.builder.build_int_z_extend(
+                                    cmp,
+                                    context.ctx.i64_type(),
+                                    "booltmp",
+                                )?
+                            }
                             BinaryOp::UserDefined(op) => {
                                 let mut fn_name = "binary".to_string();
                                 fn_name.push(*op);
@@ -651,7 +657,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 // optimizing the newly created function
 
-                let options = PassBuilderOptions::create();
+                /*let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -659,7 +665,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }
+                }*/
 
                 Ok(fn_value)
             }
