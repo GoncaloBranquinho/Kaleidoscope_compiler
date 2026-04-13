@@ -13,9 +13,9 @@
 
 This project is still under development and not yet complete.
 
-The project consists of studying Rust, the LLVM architecture and its the intermediate language representation and re-implementing a a small compiler for a toy language similar to the Kaleidoscope example in the [tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/) implementation in C++. I would also like to study and make use of LLVM’s JIT compilation facilities.
+It started as a way of studying Rust, the LLVM architecture and its intermediate language representation by re-implementing a small compiler for a toy language similar to the Kaleidoscope example in the [tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/) implementation in C++.
 
-
+Since I have already completed the tutorial, I am now extending Kaleidoscope to explore new features and design ideas.
 
 <!-- GETTING STARTED -->
 ## Getting Started
