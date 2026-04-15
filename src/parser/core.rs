@@ -45,9 +45,9 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             match token {
                 TokenKind::Keyword(Def) => self.error_recovery(&mut program, Self::parse_def),
                 TokenKind::Keyword(Extern) => self.error_recovery(&mut program, Self::parse_extern),
-                TokenKind::Op(';') => {
+                /*TokenKind::Op(';') => {
                     let _ = self.consume_token();
-                }
+                }*/
                 _ => self.error_recovery(&mut program, Self::parse_top_level_expr),
             }
         }
@@ -140,14 +140,21 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         if kind > 0 && args.len() != kind as usize {
             return Err(ParserErrorKind::InvalidSignatuere);
         }
-        let typ = match self.peek_token()? {
-            TokenKind::Op(':') => {
+        match self.opt_peek_token()? {
+            Some(TokenKind::Op('-')) => {
                 self.consume_token()?;
-                self.parse_type()?
+                let typ = match self.peek_token()? {
+                    TokenKind::Op('>') => {
+                        self.consume_token()?;
+
+                        self.parse_type()?
+                    }
+                    t => return Err(ParserErrorKind::UnexpectedToken(t)),
+                };
+                Ok(Prototype::new(id, args, Some(typ)))
             }
-            t => return Err(ParserErrorKind::UnexpectedToken(t)),
-        };
-        Ok(Prototype::new(id, args, Some(typ)))
+            _ => Ok(Prototype::new(id, args, Some(Box::new(TypeKind::Unit)))),
+        }
     }
 
     fn parse_extern(&mut self) -> Result<DeclKind, ParserErrorKind> {
@@ -158,13 +165,12 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     fn parse_def(&mut self) -> Result<DeclKind, ParserErrorKind> {
         self.consume_token()?;
         let proto = self.parse_prototype()?;
-        let e = self.parse_expr()?;
+        let e = self.parse_block()?;
         Ok(DeclKind::Function(proto, e))
     }
 
     fn parse_top_level_expr(&mut self) -> Result<DeclKind, ParserErrorKind> {
         let e = self.parse_expr()?;
-        // Add type inference?
         let proto = Prototype::new("__anon_expr".to_string(), Vec::new(), None);
         Ok(DeclKind::Function(proto, e))
     }
@@ -173,7 +179,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         match self.peek_token()? {
             TokenKind::Identifier(_) => self.parse_identifier(),
             TokenKind::Number(_) => self.parse_number(),
-            TokenKind::Op('(') => self.parse_paren(),
+            TokenKind::Op('(') => self.parse_paren(Self::parse_expr),
             TokenKind::Keyword(If) => self.parse_if(),
             TokenKind::Keyword(For) => self.parse_for(),
             TokenKind::Keyword(Var) => self.parse_var(),
@@ -294,7 +300,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         }
 
-        let body = self.parse_expr()?;
+        let body = self.parse_block()?;
 
         Ok(Box::new(ExprKind::ForLoop(id, start, end, step, body)))
     }
@@ -310,7 +316,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         }
-        let then = self.parse_expr()?;
+        let then = self.parse_block()?;
 
         match self.peek_token()? {
             TokenKind::Keyword(Else) => {
@@ -318,14 +324,17 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
             t => return Err(ParserErrorKind::UnexpectedToken(t)),
         }
-        let elsee = self.parse_expr()?;
+        let elsee = self.parse_block()?;
 
         Ok(Box::new(ExprKind::IfThenElse(cond, then, elsee)))
     }
 
-    fn parse_paren(&mut self) -> Result<Expr, ParserErrorKind> {
+    fn parse_paren<F>(&mut self, f: F) -> Result<Expr, ParserErrorKind>
+    where
+        F: Fn(&mut Self) -> Result<Expr, ParserErrorKind>,
+    {
         self.consume_token()?;
-        let v = self.parse_expr()?;
+        let v = f(self)?;
 
         match self.peek_token()? {
             TokenKind::Op(')') => {
@@ -423,7 +432,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             return Err(ParserErrorKind::UnexpectedToken(token));
         }
         self.consume_token()?;
-        let body = self.parse_expr()?;
+        let body = self.parse_block()?;
         Ok(Box::new(ExprKind::Var(vars, body)))
     }
 
@@ -450,8 +459,30 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 self.consume_token()?;
                 Ok(Box::new(TypeKind::I64))
             }
+            TokenKind::Op('(') => {
+                self.consume_token()?;
+                if let TokenKind::Op(')') = self.peek_token()? {
+                    self.consume_token()?;
+                    Ok(Box::new(TypeKind::Unit))
+                } else {
+                    Err(ParserErrorKind::InvalidSignatuere)
+                }
+            }
             t => Err(ParserErrorKind::UnexpectedToken(t)),
         }
+    }
+
+    fn parse_block(&mut self) -> Result<Expr, ParserErrorKind> {
+        let mut exprs: Vec<Expr> = Vec::new();
+        while self.opt_peek_token()?.is_some() {
+            exprs.push(self.parse_expr()?);
+            if let Some(TokenKind::Op(';')) = self.opt_peek_token()? {
+                self.consume_token()?;
+            } else {
+                break;
+            }
+        }
+        Ok(Box::new(ExprKind::Seq(exprs)))
     }
 }
 

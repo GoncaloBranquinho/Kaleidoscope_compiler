@@ -4,4 +4,5 @@ pub type Type = Box<TypeKind>;
 pub enum TypeKind {
     F64,
     I64,
+    Unit,
 }

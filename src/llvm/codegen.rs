@@ -7,7 +7,6 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{
@@ -141,14 +140,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let f64_type = context.ctx.f64_type();
                 Ok(f64_type.const_float(*value).as_basic_value_enum())
             }
-
             ExprKind::Literal(Literal::I64(value)) => {
                 let i64_type = context.ctx.i64_type();
                 Ok(i64_type
                     .const_int(*value as u64, true)
                     .as_basic_value_enum())
             }
-
             ExprKind::Identifier(name, typ) => {
                 if let Some(value) = context.map.get(name) {
                     match typ.clone().unwrap().as_ref() {
@@ -162,6 +159,11 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                 .builder
                                 .build_load(context.ctx.i64_type(), *value, name)?)
                         }
+                        TypeKind::Unit => {
+                            Ok(context
+                                .builder
+                                .build_load(context.ctx.bool_type(), *value, name)?)
+                        }
                     }
                 } else {
                     Err(CompilerError::Llvm(format!(
@@ -170,7 +172,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     )))
                 }
             }
-
             ExprKind::Var(vars, body) => {
                 let mut old_bindings: Vec<Option<PointerValue<'ctx>>> = Vec::new();
                 let block = context
@@ -196,6 +197,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                             TypeKind::F64 => {
                                 context.ctx.f64_type().const_zero().as_basic_value_enum()
                             }
+                            TypeKind::Unit => {
+                                context.ctx.bool_type().const_zero().as_basic_value_enum()
+                            }
                         }
                     };
 
@@ -218,7 +222,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
                 Ok(body)
             }
-
             ExprKind::Unary(op, expr) => {
                 let l = expr.codegen(context)?;
 
@@ -231,22 +234,20 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                                 let fn_value = get_function(&fn_name, context)?;
                                 let call =
                                     context.builder.build_call(fn_value, &[l.into()], "unop")?;
-                                let value = call.try_as_basic_value().basic().ok_or(
-                                    CompilerError::Llvm(
+                                call.try_as_basic_value()
+                                    .basic()
+                                    .ok_or(CompilerError::Llvm(
                                         "Expected function to return a value".to_string(),
-                                    ),
-                                )?;
-                                value.into_float_value()
+                                    ))?
                             }
                         };
-                        Ok(res.into())
+                        Ok(res)
                     }
                     _ => Err(CompilerError::Llvm(
                         "Expression must be of float type".to_string(),
                     )),
                 }
             }
-
             ExprKind::Binary(op, left, right) => {
                 if let BinaryOp::Assign = op {
                     let s = if let ExprKind::Identifier(s, _) = left.as_ref() {
@@ -367,7 +368,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     )),
                 }
             }
-
             ExprKind::Call(name, args) => {
                 let callee = get_function(name, context)?;
                 if args.len() != callee.count_params() as usize {
@@ -393,7 +393,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     Err(e) => Err(e.into()),
                 }
             }
-
             ExprKind::IfThenElse(cond, fst, snd) => {
                 let cond_v = cond.codegen(context)?;
 
@@ -545,7 +544,17 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     context.map.remove(var_name);
                 }
 
-                Ok(context.ctx.f64_type().const_zero().as_basic_value_enum())
+                Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
+            }
+            ExprKind::Seq(exprs) => {
+                let size = exprs.len();
+                for (i, expr) in exprs.iter().enumerate() {
+                    let expr_res = expr.codegen(context)?;
+                    if i == size - 1 {
+                        return Ok(expr_res);
+                    }
+                }
+                Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
             }
         }
     }
@@ -561,15 +570,16 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
             let arg_type = match arg.typ.as_ref() {
                 TypeKind::F64 => f64_type.as_basic_type_enum(),
                 TypeKind::I64 => i64_type.as_basic_type_enum(),
+                TypeKind::Unit => context.ctx.bool_type().as_basic_type_enum(),
             };
             args_type.push(arg_type.into());
         }
-        let ret_type = match self.ret_type.as_deref() {
-            Some(TypeKind::F64) => f64_type.as_basic_type_enum(),
-            Some(TypeKind::I64) => i64_type.as_basic_type_enum(),
-            None => unimplemented!(),
+        let fn_type = match self.ret_type.as_deref() {
+            Some(TypeKind::F64) => f64_type.fn_type(&args_type, false),
+            Some(TypeKind::I64) => i64_type.fn_type(&args_type, false),
+            Some(TypeKind::Unit) => context.ctx.bool_type().fn_type(&args_type, false),
+            None => unreachable!(),
         };
-        let fn_type = ret_type.fn_type(&args_type, false);
 
         if context.module.get_function(&self.name).is_some() {
             return Err(CompilerError::Llvm(
@@ -657,7 +667,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 // optimizing the newly created function
 
-                let options = PassBuilderOptions::create();
+                /*let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -665,7 +675,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }
+                }*/
 
                 Ok(fn_value)
             }
@@ -832,6 +842,10 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
                         let res = jit.call::<i64>(executer_addr);
                         println!("{res}");
                     }
+                    TypeKind::Unit => {
+                        jit.call::<bool>(executer_addr);
+                        println!("()");
+                    }
                 }
                 jit.remove(rt)
             }
@@ -841,14 +855,12 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn putchard(x: f64) -> f64 {
+pub extern "C" fn putchard(x: f64) {
     print!("{}", x as u8 as char);
     std::io::stdout().flush().unwrap();
-    0.0
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn printd(x: f64) -> f64 {
+pub extern "C" fn printd(x: f64) {
     println!("{}", x);
-    0.0
 }

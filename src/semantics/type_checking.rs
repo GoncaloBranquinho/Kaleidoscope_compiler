@@ -236,7 +236,7 @@ impl TypeCheck for Expr {
                                 found: right_type,
                             });
                         }
-                        Ok(right_type)
+                        Ok(Box::new(TypeKind::Unit))
                     } else if let Some(None) = id_typ {
                         let right_type = right.type_check(symbol_table)?;
                         symbol_table.insert(
@@ -244,7 +244,7 @@ impl TypeCheck for Expr {
                             Some(right_type.clone()),
                             symbol_table.len() - 1 - scope,
                         );
-                        Ok(right_type)
+                        Ok(Box::new(TypeKind::Unit))
                     } else {
                         Err(SemanticErrorKind::UndefinedVariable { name: name.clone() })
                     }
@@ -359,9 +359,26 @@ impl TypeCheck for Expr {
                     }
                 }
 
-                let body_type = body.type_check(symbol_table);
+                body.type_check(symbol_table)?;
                 symbol_table.pop();
-                body_type
+                Ok(Box::new(TypeKind::Unit))
+            }
+            ExprKind::Seq(exprs) => {
+                let size = exprs.len();
+                for (i, expr) in exprs.iter_mut().enumerate() {
+                    let expr_type = expr.type_check(symbol_table)?;
+                    if i != size - 1 {
+                        if expr_type.as_ref() != &TypeKind::Unit {
+                            return Err(SemanticErrorKind::TypeMismatch {
+                                expected: Box::new(TypeKind::Unit),
+                                found: expr_type,
+                            });
+                        }
+                    } else {
+                        return Ok(expr_type);
+                    }
+                }
+                Ok(Box::new(TypeKind::Unit))
             }
         }
     }

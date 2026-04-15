@@ -8,6 +8,7 @@ pub enum ExprKind {
     Var(Vec<VarInfo>, Expr),
     Literal(Literal),
     Binary(BinaryOp, Expr, Expr),
+    Seq(Vec<Expr>),
     Unary(UnaryOp, Expr),
     IfThenElse(Expr, Expr, Expr),
     Call(String, Vec<Expr>),

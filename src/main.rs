@@ -41,8 +41,8 @@ pub fn compile(
     //println!("After type checking: {:?}", ast);
 
     for decl in ast.iter() {
-        let _ = decl.codegen(codegen_builder)?;
-        //fn_value.print_to_stderr();
+        let fn_value = decl.codegen(codegen_builder)?;
+        fn_value.print_to_stderr();
         decl.compile(codegen_builder, jit)?;
     }
 
