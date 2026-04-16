@@ -179,7 +179,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         match self.peek_token()? {
             TokenKind::Identifier(_) => self.parse_identifier(),
             TokenKind::Number(_) => self.parse_number(),
-            TokenKind::Op('(') => self.parse_paren(Self::parse_expr),
+            TokenKind::Op('(') => self.parse_paren(),
             TokenKind::Keyword(If) => self.parse_if(),
             TokenKind::Keyword(For) => self.parse_for(),
             TokenKind::Keyword(Var) => self.parse_var(),
@@ -329,12 +329,18 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
         Ok(Box::new(ExprKind::IfThenElse(cond, then, elsee)))
     }
 
-    fn parse_paren<F>(&mut self, f: F) -> Result<Expr, ParserErrorKind>
-    where
-        F: Fn(&mut Self) -> Result<Expr, ParserErrorKind>,
-    {
+    fn parse_paren(&mut self) -> Result<Expr, ParserErrorKind> {
         self.consume_token()?;
-        let v = f(self)?;
+        if let TokenKind::Op(')') = self.peek_token()? {
+            self.consume_token()?;
+            return Ok(Box::new(Literal::Unit.into()));
+        }
+        let v = self.parse_expr()?;
+        let v = if let TokenKind::Op(',') = self.peek_token()? {
+            self.parse_tuple(v)?
+        } else {
+            v
+        };
 
         match self.peek_token()? {
             TokenKind::Op(')') => {
@@ -461,11 +467,12 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
             TokenKind::Op('(') => {
                 self.consume_token()?;
-                if let TokenKind::Op(')') = self.peek_token()? {
-                    self.consume_token()?;
-                    Ok(Box::new(TypeKind::Unit))
-                } else {
-                    Err(ParserErrorKind::InvalidSignatuere)
+                match self.peek_token()? {
+                    TokenKind::Op(')') => {
+                        self.consume_token()?;
+                        Ok(Box::new(TypeKind::Unit))
+                    }
+                    _ => self.parse_tuple_type(),
                 }
             }
             t => Err(ParserErrorKind::UnexpectedToken(t)),
@@ -483,6 +490,35 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
         }
         Ok(Box::new(ExprKind::Seq(exprs)))
+    }
+
+    fn parse_tuple(&mut self, e: Expr) -> Result<Expr, ParserErrorKind> {
+        let mut exprs = vec![e];
+        loop {
+            self.consume_token()?;
+            exprs.push(self.parse_expr()?);
+            if !matches!(self.peek_token()?, TokenKind::Op(',')) {
+                return Ok(Box::new(ExprKind::Tuple(exprs)));
+            }
+        }
+    }
+
+    fn parse_tuple_type(&mut self) -> Result<Type, ParserErrorKind> {
+        let mut types = Vec::new();
+        loop {
+            self.consume_token()?;
+            types.push(self.parse_type()?);
+            if !matches!(self.peek_token()?, TokenKind::Op(',')) {
+                break;
+            }
+        }
+        match self.peek_token()? {
+            TokenKind::Op(')') => {
+                self.consume_token()?;
+                Ok(Box::new(TypeKind::Tuple(types)))
+            }
+            t => Err(ParserErrorKind::UnexpectedToken(t)),
+        }
     }
 }
 

@@ -7,6 +7,7 @@ pub enum ExprKind {
     Identifier(String, Option<Type>),
     Var(Vec<VarInfo>, Expr),
     Literal(Literal),
+    Tuple(Vec<Expr>),
     Binary(BinaryOp, Expr, Expr),
     Seq(Vec<Expr>),
     Unary(UnaryOp, Expr),

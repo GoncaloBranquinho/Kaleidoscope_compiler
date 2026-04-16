@@ -8,7 +8,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
@@ -26,7 +26,25 @@ use llvm_sys::orc2::{
 
 use crate::error::CompilerError;
 use crate::parser::op::BinaryOp;
-use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, TypeKind, UnaryOp};
+use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, Type, TypeKind, UnaryOp};
+
+fn get_type<'ctx>(t: &Type, context: &CodeGenBuilder<'ctx>) -> BasicTypeEnum<'ctx> {
+    match t.as_ref() {
+        TypeKind::F64 => context.ctx.f64_type().as_basic_type_enum(),
+        TypeKind::I64 => context.ctx.i64_type().as_basic_type_enum(),
+        TypeKind::Unit => context.ctx.bool_type().as_basic_type_enum(),
+        TypeKind::Tuple(types) => {
+            let mut tuple_types = Vec::new();
+            for tuple_type in types.iter() {
+                tuple_types.push(get_type(tuple_type, context));
+            }
+            context
+                .ctx
+                .struct_type(&tuple_types, false)
+                .as_basic_type_enum()
+        }
+    }
+}
 
 // Prototypes must declare the type of each argument and as well the return type
 fn get_function<'ctx>(
@@ -146,25 +164,13 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .const_int(*value as u64, true)
                     .as_basic_value_enum())
             }
+            ExprKind::Literal(Literal::Unit) => {
+                Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
+            }
             ExprKind::Identifier(name, typ) => {
                 if let Some(value) = context.map.get(name) {
-                    match typ.clone().unwrap().as_ref() {
-                        TypeKind::F64 => {
-                            Ok(context
-                                .builder
-                                .build_load(context.ctx.f64_type(), *value, name)?)
-                        }
-                        TypeKind::I64 => {
-                            Ok(context
-                                .builder
-                                .build_load(context.ctx.i64_type(), *value, name)?)
-                        }
-                        TypeKind::Unit => {
-                            Ok(context
-                                .builder
-                                .build_load(context.ctx.bool_type(), *value, name)?)
-                        }
-                    }
+                    let type_ctx = get_type(typ.as_ref().unwrap(), context);
+                    Ok(context.builder.build_load(type_ctx, *value, name)?)
                 } else {
                     Err(CompilerError::Llvm(format!(
                         "Unknown variable name: {}",
@@ -190,17 +196,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     let init_val = if let Some(init_val) = var.val {
                         init_val.codegen(context)?
                     } else {
-                        match var.t.unwrap().as_ref() {
-                            TypeKind::I64 => {
-                                context.ctx.i64_type().const_zero().as_basic_value_enum()
-                            }
-                            TypeKind::F64 => {
-                                context.ctx.f64_type().const_zero().as_basic_value_enum()
-                            }
-                            TypeKind::Unit => {
-                                context.ctx.bool_type().const_zero().as_basic_value_enum()
-                            }
-                        }
+                        get_type(var.t.as_ref().unwrap(), context).const_zero()
                     };
 
                     let alloca = create_entry_block_alloca(
@@ -556,6 +552,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
                 Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
             }
+            ExprKind::Tuple(_expr_kinds) => {
+                todo!()
+            }
         }
     }
 }
@@ -563,24 +562,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 impl<'ctx> CodeGen<'ctx> for Prototype {
     type Item = FunctionValue<'ctx>;
     fn codegen(&self, context: &mut CodeGenBuilder<'ctx>) -> Result<Self::Item, CompilerError> {
-        let f64_type = context.ctx.f64_type();
-        let i64_type = context.ctx.i64_type();
-        let mut args_type: Vec<BasicMetadataTypeEnum> = Vec::new();
+        let mut args_type = Vec::new();
         for arg in self.args.iter() {
-            let arg_type = match arg.typ.as_ref() {
-                TypeKind::F64 => f64_type.as_basic_type_enum(),
-                TypeKind::I64 => i64_type.as_basic_type_enum(),
-                TypeKind::Unit => context.ctx.bool_type().as_basic_type_enum(),
-            };
+            let arg_type = get_type(&arg.typ, context);
             args_type.push(arg_type.into());
         }
-        let fn_type = match self.ret_type.as_deref() {
-            Some(TypeKind::F64) => f64_type.fn_type(&args_type, false),
-            Some(TypeKind::I64) => i64_type.fn_type(&args_type, false),
-            Some(TypeKind::Unit) => context.ctx.bool_type().fn_type(&args_type, false),
-            None => unreachable!(),
-        };
-
+        let fn_type = get_type(self.ret_type.as_ref().unwrap(), context).fn_type(&args_type, false);
         if context.module.get_function(&self.name).is_some() {
             return Err(CompilerError::Llvm(
                 "Function cannot have multiple declarations".to_string(),
@@ -845,6 +832,10 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
                     TypeKind::Unit => {
                         jit.call::<bool>(executer_addr);
                         println!("()");
+                    }
+                    TypeKind::Tuple(_) => {
+                        // let res = jit.call::<_>(executer_addr);
+                        // println!("{res}");
                     }
                 }
                 jit.remove(rt)

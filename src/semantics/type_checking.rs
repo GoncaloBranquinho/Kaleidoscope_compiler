@@ -138,6 +138,13 @@ impl TypeCheck for Prototype {
         symbol_table: &mut SymbolTable,
     ) -> Result<Self::Output, SemanticErrorKind> {
         for arg in self.args.iter() {
+            if let TypeKind::Tuple(types) = arg.typ.as_ref()
+                && types.len() == 1
+            {
+                return Err(SemanticErrorKind::UnknownType {
+                    name: arg.typ.clone(),
+                });
+            }
             symbol_table.insert(
                 arg.name.clone(),
                 Some(arg.typ.clone()),
@@ -204,6 +211,7 @@ impl TypeCheck for Expr {
             ExprKind::Literal(literal) => match literal {
                 Literal::F64(_) => Ok(Box::new(TypeKind::F64)),
                 Literal::I64(_) => Ok(Box::new(TypeKind::I64)),
+                Literal::Unit => Ok(Box::new(TypeKind::Unit)),
             },
             ExprKind::Binary(op, left, right) => match op {
                 BinaryOp::Add | BinaryOp::Lt | BinaryOp::Mult | BinaryOp::Sub => {
@@ -380,6 +388,13 @@ impl TypeCheck for Expr {
                 }
                 Ok(Box::new(TypeKind::Unit))
             }
+            ExprKind::Tuple(exprs) => {
+                let mut types = Vec::new();
+                for expr in exprs.iter_mut() {
+                    types.push(expr.type_check(symbol_table)?);
+                }
+                Ok(Box::new(TypeKind::Tuple(types)))
+            }
         }
     }
 }
@@ -392,4 +407,5 @@ pub enum SemanticErrorKind {
     InvalidArgumentSize { expected: usize, found: usize },
     UnknownFunction { name: String },
     UnknownOperator { name: char },
+    UnknownType { name: Type },
 }

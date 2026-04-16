@@ -78,6 +78,9 @@ impl fmt::Display for SemanticErrorKind {
             SemanticErrorKind::UnknownOperator { name } => {
                 write!(f, "Unknown operator: '{:?}'", name)
             }
+            SemanticErrorKind::UnknownType { name } => {
+                write!(f, "Unknown type: '{:?}'", name)
+            }
         }
     }
 }
