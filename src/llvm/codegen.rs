@@ -3,16 +3,17 @@ use std::ffi::CString;
 use std::io::Write;
 use std::mem::{forget, replace, transmute};
 
+use inkwell::attributes::Attribute;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::{AnyType, BasicType, BasicTypeEnum};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue,
 };
-use inkwell::{FloatPredicate, IntPredicate, OptimizationLevel};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 use llvm_sys::error::LLVMErrorRef;
 use llvm_sys::orc2::lljit::{
     LLVMOrcCreateLLJIT, LLVMOrcCreateLLJITBuilder, LLVMOrcLLJITAddLLVMIRModuleWithRT,
@@ -254,6 +255,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         ));
                     };
                     let r = right.codegen(context)?;
+
                     if let Some(var) = context.map.get(s) {
                         context.builder.build_store(*var, r)?;
                         return Ok(r);
@@ -366,27 +368,53 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
             ExprKind::Call(name, args) => {
                 let callee = get_function(name, context)?;
-                if args.len() != callee.count_params() as usize {
+                let flag = callee.get_type().get_return_type().is_some();
+                let args_len = if flag { args.len() } else { args.len() + 1 };
+                if args_len != callee.count_params() as usize {
                     return Err(CompilerError::Llvm(
                         "Incorrect # arguments passed".to_string(),
                     ));
                 }
                 let mut vec: Vec<BasicMetadataValueEnum> = Vec::new();
-                let tmp = 0..args.len();
-                for i in tmp {
-                    let arg_eval = args[i].codegen(context)?;
+
+                let proto = context.function_protos.get(name).unwrap();
+                let return_type = get_type(proto.ret_type.as_ref().unwrap(), context);
+
+                let alloca = if flag {
+                    None
+                } else {
+                    let block = context
+                        .builder
+                        .get_insert_block()
+                        .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+
+                    let function = block.get_parent().ok_or_else(|| {
+                        CompilerError::Llvm("Basic Block has no parent function".to_string())
+                    })?;
+
+                    let alloca =
+                        create_entry_block_alloca(context, function, "__sret_var", return_type)?;
+                    vec.push(alloca.into());
+                    Some(alloca)
+                };
+
+                for arg in args.iter() {
+                    let arg_eval = arg.codegen(context)?;
                     vec.push(arg_eval.into());
                 }
 
                 let call = context.builder.build_call(callee, &vec, "calltmp");
-                match call {
-                    Ok(v) => {
-                        let value = v.try_as_basic_value().basic().ok_or(CompilerError::Llvm(
-                            "Expected function to return a value".to_string(),
-                        ))?;
-                        Ok(value)
+
+                if let Some(alloca) = alloca {
+                    call?;
+                    Ok(context
+                        .builder
+                        .build_load(return_type, alloca, "sret_load")?)
+                } else {
+                    match call {
+                        Ok(v) => Ok(v.try_as_basic_value().basic().unwrap()),
+                        Err(e) => Err(e.into()),
                     }
-                    Err(e) => Err(e.into()),
                 }
             }
             ExprKind::IfThenElse(cond, fst, snd) => {
@@ -478,13 +506,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 context.builder.build_unconditional_branch(loop_cond_bb)?;
                 context.builder.position_at_end(loop_cond_bb);
 
-                let end_cond = if let BasicValueEnum::IntValue(end_cond) = end.codegen(context)? {
-                    end_cond
-                } else {
-                    return Err(CompilerError::Llvm(
-                        "Expected condition to be of type Int".to_string(),
-                    ));
-                };
+                let end_cond = end.codegen(context)?.into_int_value();
 
                 let loop_bb = context.ctx.append_basic_block(function, "loop_bb");
 
@@ -552,8 +574,26 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 }
                 Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
             }
-            ExprKind::Tuple(_expr_kinds) => {
-                todo!()
+            ExprKind::Tuple(exprs) => {
+                let mut tuple_types = Vec::new();
+                let mut tuple_values = Vec::new();
+                for expr in exprs.iter() {
+                    let expr_value = expr.codegen(context)?;
+                    tuple_types.push(expr_value.get_type());
+                    tuple_values.push(expr_value);
+                }
+
+                let mut struct_value_undef =
+                    context.ctx.struct_type(&tuple_types, false).get_undef();
+
+                for (i, tuple_value) in tuple_values.iter().enumerate() {
+                    struct_value_undef = context
+                        .builder
+                        .build_insert_value(struct_value_undef, *tuple_value, i as u32, "tuple")?
+                        .into_struct_value();
+                }
+
+                Ok(struct_value_undef.as_basic_value_enum())
             }
         }
     }
@@ -567,7 +607,19 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
             let arg_type = get_type(&arg.typ, context);
             args_type.push(arg_type.into());
         }
-        let fn_type = get_type(self.ret_type.as_ref().unwrap(), context).fn_type(&args_type, false);
+
+        let flag = matches!(
+            self.ret_type.as_ref().unwrap().as_ref(),
+            &TypeKind::Tuple(_)
+        );
+        let return_type = get_type(self.ret_type.as_ref().unwrap(), context);
+        let fn_type = if flag {
+            args_type.insert(0, context.ctx.ptr_type(AddressSpace::default()).into());
+            context.ctx.void_type().fn_type(&args_type, false)
+        } else {
+            return_type.fn_type(&args_type, false)
+        };
+
         if context.module.get_function(&self.name).is_some() {
             return Err(CompilerError::Llvm(
                 "Function cannot have multiple declarations".to_string(),
@@ -576,8 +628,24 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
 
         let fn_value = context.module.add_function(&self.name, fn_type, None);
 
+        if flag {
+            fn_value.add_attribute(
+                inkwell::attributes::AttributeLoc::Param(0),
+                context.ctx.create_type_attribute(
+                    Attribute::get_named_enum_kind_id("sret"),
+                    return_type.as_any_type_enum(),
+                ),
+            );
+        }
+
+        let ptr = if flag { 1 } else { 0 };
+
         for (i, arg) in fn_value.get_param_iter().enumerate() {
-            arg.set_name(&self.args[i].name);
+            if i == 0 && flag {
+                arg.set_name("__sret_var");
+            } else {
+                arg.set_name(&self.args[i - ptr].name);
+            }
         }
 
         Ok(fn_value)
@@ -607,24 +675,32 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                 context.builder.position_at_end(basic_block);
                 context.map.clear();
 
-                if proto.args.len() != fn_value.count_params() as usize {
+                let flag = fn_value.get_type().get_return_type().is_some();
+                let args_len = if flag {
+                    proto.args.len()
+                } else {
+                    proto.args.len() + 1
+                };
+                if args_len != fn_value.count_params() as usize {
                     return Err(CompilerError::Llvm(
                         "Incorrect # arguments passed".to_string(),
                     ));
                 }
 
                 for (i, arg) in fn_value.get_param_iter().enumerate() {
-                    arg.set_name(&proto.args[i].name);
-                    let alloca = create_entry_block_alloca(
-                        context,
-                        fn_value,
-                        &proto.args[i].name,
-                        fn_value.get_nth_param(i as u32).unwrap().get_type(),
-                    )?;
-                    context.builder.build_store(alloca, arg)?;
-                    context
-                        .map
-                        .insert(arg.get_name().to_string_lossy().to_string(), alloca);
+                    //arg.set_name(&proto.args[i].name);
+                    if flag || i != 0 {
+                        let alloca = create_entry_block_alloca(
+                            context,
+                            fn_value,
+                            &arg.get_name().to_string_lossy(),
+                            fn_value.get_nth_param(i as u32).unwrap().get_type(),
+                        )?;
+                        context.builder.build_store(alloca, arg)?;
+                        context
+                            .map
+                            .insert(arg.get_name().to_string_lossy().to_string(), alloca);
+                    }
                 }
 
                 let body_value = body.codegen(context);
@@ -638,19 +714,22 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     }
 
                     Ok(BasicValueEnum::FloatValue(value)) => {
-                        let _ = context.builder.build_return(Some(&value));
-                        fn_value.verify(true);
+                        context.builder.build_return(Some(&value))?;
                     }
 
                     Ok(BasicValueEnum::IntValue(value)) => {
-                        let _ = context.builder.build_return(Some(&value));
-                        fn_value.verify(true);
+                        context.builder.build_return(Some(&value))?;
+                    }
+                    Ok(BasicValueEnum::StructValue(value)) => {
+                        // todo
+                        let arg = fn_value.get_first_param().unwrap().into_pointer_value();
+                        context.builder.build_store(arg, value)?;
+                        context.builder.build_return(None)?;
                     }
 
-                    _ => {
-                        fn_value.verify(true);
-                    }
+                    _ => {}
                 }
+                fn_value.verify(true);
 
                 // optimizing the newly created function
 
@@ -750,6 +829,7 @@ pub trait JitCompiler<'ctx> {
         rt: LLVMOrcResourceTrackerRef,
         jit: &mut KaleidoscopeJIT,
         ret_type: &TypeKind,
+        context: &CodeGenBuilder<'ctx>,
     ) -> Result<(), CompilerError>;
 }
 
@@ -785,7 +865,7 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
 
                         let tsm = LLVMOrcCreateNewThreadSafeModule(ptr, *codegen_builder.tsc);
                         jit.add_module(tsm, rt)?;
-                        self.run(rt, jit, proto.ret_type.as_deref().unwrap())
+                        self.run(rt, jit, proto.ret_type.as_deref().unwrap(), codegen_builder)
                     }
                 } else {
                     unsafe {
@@ -816,33 +896,97 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
         rt: LLVMOrcResourceTrackerRef,
         jit: &mut KaleidoscopeJIT,
         ret_type: &TypeKind,
+        context: &CodeGenBuilder<'ctx>,
     ) -> Result<(), CompilerError> {
         match self {
             DeclKind::Function { .. } => {
-                let executer_addr = jit.lookup("__anon_expr")?;
-                match ret_type {
-                    TypeKind::F64 => {
-                        let res = jit.call::<f64>(executer_addr);
-                        println!("{res}");
-                    }
-                    TypeKind::I64 => {
-                        let res = jit.call::<i64>(executer_addr);
-                        println!("{res}");
-                    }
-                    TypeKind::Unit => {
-                        jit.call::<bool>(executer_addr);
-                        println!("()");
-                    }
-                    TypeKind::Tuple(_) => {
-                        // let res = jit.call::<_>(executer_addr);
-                        // println!("{res}");
-                    }
-                }
+                print_result(jit, ret_type, context)?;
                 jit.remove(rt)
             }
             _ => Ok(()),
         }
     }
+}
+
+fn print_result<'ctx>(
+    jit: &mut KaleidoscopeJIT,
+    ret_type: &TypeKind,
+    context: &CodeGenBuilder<'ctx>,
+) -> Result<(), CompilerError> {
+    let executer_addr = jit.lookup("__anon_expr")?;
+    match ret_type {
+        TypeKind::F64 => {
+            let res = jit.call::<f64>(executer_addr);
+            println!("{res}");
+        }
+        TypeKind::I64 => {
+            let res = jit.call::<i64>(executer_addr);
+            println!("{res}");
+        }
+        TypeKind::Unit => {
+            jit.call::<bool>(executer_addr);
+            println!("()");
+        }
+        TypeKind::Tuple(tuple_types) => {
+            let mut tuple_types_basic = Vec::new();
+            for t in tuple_types.iter() {
+                tuple_types_basic.push(get_type(t, context));
+            }
+            let struct_type = context.ctx.struct_type(&tuple_types_basic, false);
+            let abi_size = context
+                .target_machine
+                .get_target_data()
+                .get_abi_size(&struct_type);
+            let mut buf = vec![0u8; abi_size as usize];
+            unsafe {
+                let function: extern "C" fn(*mut u8) = transmute(executer_addr as usize);
+                function(buf.as_mut_ptr());
+            }
+            print_tuple(&TypeKind::Tuple(tuple_types.clone()), buf, context)?;
+            println!();
+        }
+    }
+    Ok(())
+}
+
+fn print_tuple<'ctx>(
+    t: &TypeKind,
+    offsets: Vec<u8>,
+    context: &CodeGenBuilder<'ctx>,
+) -> Result<(), CompilerError> {
+    match t {
+        TypeKind::F64 => {
+            let value = f64::from_ne_bytes(offsets[..8].try_into().unwrap());
+            print!("{}", value);
+        }
+        TypeKind::I64 => {
+            let value = i64::from_ne_bytes(offsets[..8].try_into().unwrap());
+            print!("{}", value);
+        }
+        TypeKind::Unit => {
+            print!("()");
+        }
+        TypeKind::Tuple(tuple_types) => {
+            print!("(");
+            let mut tuple_types_basic = Vec::new();
+            for t in tuple_types.iter() {
+                tuple_types_basic.push(get_type(t, context));
+            }
+            let struct_type = context.ctx.struct_type(&tuple_types_basic, false);
+            for (i, tuple_type) in tuple_types.iter().enumerate() {
+                if i > 0 {
+                    print!(",")
+                }
+                let target_data = context.target_machine.get_target_data();
+                let offset = target_data
+                    .offset_of_element(&struct_type, i as u32)
+                    .unwrap() as usize;
+                print_tuple(tuple_type, offsets[offset..].to_vec(), context)?;
+            }
+            print!(")");
+        }
+    }
+    Ok(())
 }
 
 #[unsafe(no_mangle)]

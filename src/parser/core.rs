@@ -506,11 +506,11 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     fn parse_tuple_type(&mut self) -> Result<Type, ParserErrorKind> {
         let mut types = Vec::new();
         loop {
-            self.consume_token()?;
             types.push(self.parse_type()?);
             if !matches!(self.peek_token()?, TokenKind::Op(',')) {
                 break;
             }
+            self.consume_token()?;
         }
         match self.peek_token()? {
             TokenKind::Op(')') => {
