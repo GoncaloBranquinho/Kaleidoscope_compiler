@@ -761,7 +761,6 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                         context.builder.build_return(Some(&value))?;
                     }
                     Ok(BasicValueEnum::StructValue(value)) => {
-                        // todo
                         let arg = fn_value.get_first_param().unwrap().into_pointer_value();
                         context.builder.build_store(arg, value)?;
                         context.builder.build_return(None)?;

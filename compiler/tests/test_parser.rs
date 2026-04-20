@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use kaleipl::{lexer::Lexer, parser::Parser};
+use compiler::{lexer::Lexer, parser::Parser};
 
 /*fn assert_ast(ast: &Program, expected_ast: &Program) {
     for (i, node) in ast.iter().enumerate() {

@@ -1,4 +1,4 @@
-use kaleipl::lexer::{Lexer, Typ, core::TokenResult, keywords::Keyword::*, tokens::TokenKind::*};
+use compiler::lexer::{Lexer, Typ, core::TokenResult, keywords::Keyword::*, tokens::TokenKind::*};
 
 fn assert_tokens(lexer: &mut Lexer, tokens: &[TokenResult]) {
     for (i, token) in lexer.enumerate() {
@@ -12,8 +12,8 @@ fn test_valid_tokens() {
     let mut lexer = Lexer::new(input.char_indices().peekable());
     let tokens: Vec<TokenResult> = vec![
         Ok(Number(Typ::Int(1))),
-        Ok(Number(Typ::Double(1.0))),
-        Ok(Number(Typ::Double(1.))),
+        Ok(Number(Typ::Double("1.0".to_string()))),
+        Ok(Number(Typ::Double("1.".to_string()))),
         Ok(Keyword(If)),
         Ok(Keyword(Then)),
         Ok(Keyword(Else)),

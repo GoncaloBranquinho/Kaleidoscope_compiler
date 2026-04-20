@@ -1,8 +1,8 @@
-use inkwell::context::Context;
-use kaleipl::{
+use compiler::{
     CodeGen, CodeGenBuilder, CompilerError, JitCompiler, KaleidoscopeJIT, TypeCheck, lexer::Lexer,
     parser::Parser, semantics::type_checking::SymbolTable,
 };
+use inkwell::context::Context;
 use llvm_sys::orc2::{LLVMOrcCreateNewThreadSafeContext, LLVMOrcThreadSafeContextGetContext};
 use owo_colors::OwoColorize;
 use std::{
@@ -18,7 +18,7 @@ pub fn compile(
     symbol_table: &mut SymbolTable,
 ) -> Result<(), CompilerError> {
     let lexer = Lexer::new(content.char_indices().peekable());
-    /*let tokens: Result<Vec<kaleipl::lexer::tokens::TokenKind>, kaleipl::lexer::core::LexerError> =
+    /*let tokens: Result<Vec<compiler::lexer::tokens::TokenKind>, compiler::lexer::core::LexerError> =
         lexer.into_iter().collect();
     let tokens = tokens.unwrap();
     println!("{tokens:?}");
