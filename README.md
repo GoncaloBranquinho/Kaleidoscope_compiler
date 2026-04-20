@@ -78,6 +78,7 @@ https://llvm.org/docs/LangRef.html)
 - [llvm-sys](https://docs.rs/llvm-sys/201.0.1/llvm_sys/)
 - [Inkwell](https://thedan64.github.io/inkwell/inkwell/index.html)
 - [The mess that is handling structure arguments and returns in LLVM](https://yorickpeterse.com/articles/the-mess-that-is-handling-structure-arguments-and-returns-in-llvm/#what-is-an-abi?)
+- [Gep](https://llvm.org/docs/GetElementPtr.html)
 
 <br/>
 
