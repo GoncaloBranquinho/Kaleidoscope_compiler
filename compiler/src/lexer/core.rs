@@ -42,7 +42,6 @@ impl<'s> Iterator for Lexer<'s> {
                 break;
             }
         }
-
         let token = match self.peek_char() {
             Some(a) if a.is_alphabetic() => {
                 let mut id_str = String::new();
@@ -83,7 +82,7 @@ impl<'s> Iterator for Lexer<'s> {
                             break;
                         }
                     }
-                    Ok(TokenKind::Number(Typ::Double(n_str.parse().unwrap())))
+                    Ok(TokenKind::Number(Typ::Double(n_str)))
                 } else {
                     Ok(TokenKind::Number(Typ::Int(n_str.parse().unwrap())))
                 }

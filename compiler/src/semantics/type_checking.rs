@@ -230,14 +230,30 @@ impl TypeCheck for Expr {
                     }
                 }
                 BinaryOp::Assign => {
-                    let name = if let ExprKind::Identifier(name, _) = left.as_mut() {
-                        name
-                    } else {
-                        unimplemented!()
+                    let left_type = left.type_check(symbol_table);
+                    let right_type = right.type_check(symbol_table)?;
+                    let name = match left.as_ref() {
+                        ExprKind::Identifier(name, _) => name,
+                        ExprKind::Projection(id, _) => {
+                            let left_type = left_type?;
+                            if left_type != right_type {
+                                return Err(SemanticErrorKind::TypeMismatch {
+                                    expected: left_type,
+                                    found: right_type,
+                                });
+                            }
+                            if !matches!(
+                                id.as_ref(),
+                                ExprKind::Identifier(_, _) | ExprKind::Projection(_, _)
+                            ) {
+                                return Err(SemanticErrorKind::Immutable { val: left.clone() });
+                            }
+                            return Ok(Box::new(TypeKind::Unit));
+                        }
+                        _ => unreachable!(),
                     };
                     let (id_typ, scope) = symbol_table.get(name);
                     if let Some(Some(typ)) = id_typ {
-                        let right_type = right.type_check(symbol_table)?;
                         if right_type != typ {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: typ,
@@ -246,7 +262,6 @@ impl TypeCheck for Expr {
                         }
                         Ok(Box::new(TypeKind::Unit))
                     } else if let Some(None) = id_typ {
-                        let right_type = right.type_check(symbol_table)?;
                         symbol_table.insert(
                             name.clone(),
                             Some(right_type.clone()),
@@ -395,6 +410,39 @@ impl TypeCheck for Expr {
                 }
                 Ok(Box::new(TypeKind::Tuple(types)))
             }
+            ExprKind::Projection(val, idx) => {
+                let val_type = val.type_check(symbol_table)?;
+
+                let t = match val_type.as_ref() {
+                    TypeKind::Tuple(t) => t,
+                    _ => {
+                        return Err(SemanticErrorKind::TypeMismatch {
+                            expected: Box::new(TypeKind::Tuple(vec![])),
+                            found: val_type,
+                        });
+                    }
+                };
+
+                let idx_type = idx.type_check(symbol_table)?;
+                let n = match idx.as_ref() {
+                    ExprKind::Literal(Literal::I64(n)) => *n,
+                    _ => {
+                        return Err(SemanticErrorKind::TypeMismatch {
+                            expected: Box::new(TypeKind::I64),
+                            found: idx_type,
+                        });
+                    }
+                };
+
+                if n < 0 || n >= t.len() as i64 {
+                    return Err(SemanticErrorKind::InvalidField {
+                        idx: n,
+                        on: Box::new(TypeKind::Tuple(t.clone())),
+                    });
+                }
+
+                Ok(t[n as usize].clone())
+            }
         }
     }
 }
@@ -408,4 +456,6 @@ pub enum SemanticErrorKind {
     UnknownFunction { name: String },
     UnknownOperator { name: char },
     UnknownType { name: Type },
+    InvalidField { idx: i64, on: Type },
+    Immutable { val: Expr },
 }

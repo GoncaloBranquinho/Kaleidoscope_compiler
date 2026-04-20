@@ -1,8 +1,8 @@
 use crate::lexer::keywords::Keyword;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Typ {
-    Double(f64),
+    Double(String),
     Int(i64),
 }
 
@@ -44,18 +44,11 @@ impl TokenKind {
 }
 
 impl Typ {
-    pub fn into_int(self) -> i64 {
+    pub fn into_int(&self) -> i64 {
         if let Typ::Int(n) = self {
-            n
+            *n
         } else {
             panic!("Found {self:?} but expected the Int variant")
-        }
-    }
-    pub fn into_double(self) -> f64 {
-        if let Typ::Double(n) = self {
-            n
-        } else {
-            panic!("Found {self:?} but expected the Double variant")
         }
     }
 }

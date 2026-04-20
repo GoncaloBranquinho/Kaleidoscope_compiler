@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::io::Write;
 use std::mem::{forget, replace, transmute};
 
 use inkwell::attributes::Attribute;
@@ -8,6 +7,7 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{AnyType, BasicType, BasicTypeEnum};
 use inkwell::values::{
@@ -20,7 +20,8 @@ use llvm_sys::orc2::lljit::{
     LLVMOrcLLJITBuilderRef, LLVMOrcLLJITGetMainJITDylib, LLVMOrcLLJITLookup, LLVMOrcLLJITRef,
 };
 use llvm_sys::orc2::{
-    LLVMOrcCreateNewThreadSafeModule, LLVMOrcExecutorAddress, LLVMOrcJITDylibCreateResourceTracker,
+    LLVMOrcCreateDynamicLibrarySearchGeneratorForPath, LLVMOrcCreateNewThreadSafeModule,
+    LLVMOrcExecutorAddress, LLVMOrcJITDylibAddGenerator, LLVMOrcJITDylibCreateResourceTracker,
     LLVMOrcJITDylibGetDefaultResourceTracker, LLVMOrcResourceTrackerRef,
     LLVMOrcResourceTrackerRemove, LLVMOrcThreadSafeContextRef, LLVMOrcThreadSafeModuleRef,
 };
@@ -28,6 +29,37 @@ use llvm_sys::orc2::{
 use crate::error::CompilerError;
 use crate::parser::op::BinaryOp;
 use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, Type, TypeKind, UnaryOp};
+
+fn get_left_value_ptr<'ctx>(
+    expr: &Expr,
+    context: &mut CodeGenBuilder<'ctx>,
+) -> Result<PointerValue<'ctx>, CompilerError> {
+    match expr.as_ref() {
+        ExprKind::Identifier(name, _) => {
+            if let Some(ptr) = context.map.get(name) {
+                Ok(*ptr)
+            } else {
+                Err(CompilerError::Llvm(
+                    "Left-hand side of assignment must be a variable or a tuple field".to_string(),
+                ))
+            }
+        }
+        ExprKind::Projection(t1, t2) => {
+            let ptr = get_left_value_ptr(t1, context)?;
+            let idx = match t2.as_ref() {
+                ExprKind::Literal(Literal::I64(n)) => n,
+                _ => unreachable!(),
+            };
+            let struct_type = t1.codegen(context)?.get_type().into_struct_type();
+            Ok(context
+                .builder
+                .build_struct_gep(struct_type, ptr, *idx as u32, "gep_on_tuple")?)
+        }
+        _ => {
+            unreachable!()
+        }
+    }
+}
 
 fn get_type<'ctx>(t: &Type, context: &CodeGenBuilder<'ctx>) -> BasicTypeEnum<'ctx> {
     match t.as_ref() {
@@ -247,21 +279,17 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
             ExprKind::Binary(op, left, right) => {
                 if let BinaryOp::Assign = op {
-                    let s = if let ExprKind::Identifier(s, _) = left.as_ref() {
+                    /*let s = if let ExprKind::Identifier(s, _) = left.as_ref() {
                         s
                     } else {
                         return Err(CompilerError::Llvm(
                             "Left-hand side of assignment must be a variable".to_string(),
                         ));
-                    };
+                    };*/
+                    let s = get_left_value_ptr(left, context)?;
                     let r = right.codegen(context)?;
-
-                    if let Some(var) = context.map.get(s) {
-                        context.builder.build_store(*var, r)?;
-                        return Ok(r);
-                    } else {
-                        return Err(CompilerError::Llvm(format!("Unknown variable name: {}", s)));
-                    }
+                    context.builder.build_store(s, r)?;
+                    return Ok(r);
                 }
                 let l = left.codegen(context)?;
                 let r = right.codegen(context)?;
@@ -595,6 +623,18 @@ impl<'ctx> CodeGen<'ctx> for Expr {
 
                 Ok(struct_value_undef.as_basic_value_enum())
             }
+            ExprKind::Projection(val, idx) => {
+                let val = val.codegen(context)?;
+                let n = match idx.as_ref() {
+                    ExprKind::Literal(Literal::I64(n)) => n,
+                    _ => unreachable!(),
+                };
+                Ok(context.builder.build_extract_value(
+                    val.into_struct_value(),
+                    *n as u32,
+                    "extract",
+                )?)
+            }
         }
     }
 }
@@ -731,9 +771,11 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                 }
                 fn_value.verify(true);
 
+                // The following block is commented for debugging purposes
+
                 // optimizing the newly created function
 
-                /*let options = PassBuilderOptions::create();
+                let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -741,7 +783,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }*/
+                }
 
                 Ok(fn_value)
             }
@@ -762,7 +804,17 @@ impl KaleidoscopeJIT {
             if !err.is_null() {
                 return Err(err);
             }
-
+            let dylib = LLVMOrcLLJITGetMainJITDylib(lljit);
+            let mut generator = std::ptr::null_mut();
+            let path_to_lib = CString::new("target/debug/libruntime.so").unwrap();
+            LLVMOrcCreateDynamicLibrarySearchGeneratorForPath(
+                &mut generator,
+                path_to_lib.as_ptr(),
+                0,
+                None,
+                std::ptr::null_mut(),
+            );
+            LLVMOrcJITDylibAddGenerator(dylib, generator);
             Ok(KaleidoscopeJIT { lljit })
         }
     }
@@ -987,15 +1039,4 @@ fn print_tuple<'ctx>(
         }
     }
     Ok(())
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn putchard(x: f64) {
-    print!("{}", x as u8 as char);
-    std::io::stdout().flush().unwrap();
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn printd(x: f64) {
-    println!("{}", x);
 }

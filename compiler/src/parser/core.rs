@@ -176,7 +176,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParserErrorKind> {
-        match self.peek_token()? {
+        let expr = match self.peek_token()? {
             TokenKind::Identifier(_) => self.parse_identifier(),
             TokenKind::Number(_) => self.parse_number(),
             TokenKind::Op('(') => self.parse_paren(),
@@ -184,7 +184,9 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             TokenKind::Keyword(For) => self.parse_for(),
             TokenKind::Keyword(Var) => self.parse_var(),
             t => Err(ParserErrorKind::UnexpectedToken(t)),
-        }
+        }?;
+
+        self.parse_post_primary(expr)
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParserErrorKind> {
@@ -354,7 +356,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     fn parse_number(&mut self) -> Result<Expr, ParserErrorKind> {
         let number = self.consume_token()?;
         let literal = match number {
-            TokenKind::Number(Typ::Double(n)) => Literal::F64(n),
+            TokenKind::Number(Typ::Double(n)) => Literal::F64(n.parse().unwrap()),
             TokenKind::Number(Typ::Int(n)) => Literal::I64(n),
             _ => unimplemented!(),
         };
@@ -518,6 +520,44 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 Ok(Box::new(TypeKind::Tuple(types)))
             }
             t => Err(ParserErrorKind::UnexpectedToken(t)),
+        }
+    }
+
+    fn parse_post_primary(&mut self, e: Expr) -> Result<Box<ExprKind>, ParserErrorKind> {
+        match self.opt_peek_token()? {
+            Some(TokenKind::Op('.')) => {
+                self.consume_token()?;
+                self.parse_field_number(&e)
+            }
+            _ => Ok(e),
+        }
+    }
+
+    fn parse_field_number(&mut self, expr: &Expr) -> Result<Expr, ParserErrorKind> {
+        let number = self.consume_token()?;
+        match number {
+            TokenKind::Number(Typ::Double(n)) => {
+                let mut numbers = n.split('.');
+                let fst_int = numbers.next().unwrap().parse().unwrap();
+                let snd_int = numbers.next().unwrap().parse().unwrap();
+                let fst_proj = Box::new(ExprKind::Projection(
+                    expr.clone(),
+                    Box::new(ExprKind::Literal(Literal::I64(fst_int))),
+                ));
+                let snd_proj = Box::new(ExprKind::Projection(
+                    fst_proj,
+                    Box::new(ExprKind::Literal(Literal::I64(snd_int))),
+                ));
+                self.parse_post_primary(snd_proj)
+            }
+            TokenKind::Number(Typ::Int(n)) => {
+                let proj = Box::new(ExprKind::Projection(
+                    expr.clone(),
+                    Box::new(ExprKind::Literal(Literal::I64(n))),
+                ));
+                self.parse_post_primary(proj)
+            }
+            _ => unimplemented!(),
         }
     }
 }

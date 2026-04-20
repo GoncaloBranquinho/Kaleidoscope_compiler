@@ -14,6 +14,7 @@ pub enum ExprKind {
     IfThenElse(Expr, Expr, Expr),
     Call(String, Vec<Expr>),
     ForLoop(String, Expr, Expr, Option<Expr>, Expr),
+    Projection(Expr, Expr),
 }
 
 #[derive(Clone, Debug, PartialEq)]

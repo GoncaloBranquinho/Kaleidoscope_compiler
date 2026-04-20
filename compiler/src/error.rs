@@ -81,6 +81,12 @@ impl fmt::Display for SemanticErrorKind {
             SemanticErrorKind::UnknownType { name } => {
                 write!(f, "Unknown type: '{:?}'", name)
             }
+            SemanticErrorKind::InvalidField { idx, on } => {
+                write!(f, "Invalid field '{:?}' on type '{:?}'", idx, on)
+            }
+            SemanticErrorKind::Immutable { val } => {
+                write!(f, "Cannot mutate '{:?}'", val)
+            }
         }
     }
 }
