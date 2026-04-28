@@ -34,7 +34,7 @@ pub fn compile(
         }
     };
 
-    println!("Before type checknig: {:?}", ast);
+    //println!("Before type checknig: {:?}", ast);
 
     ast.type_check(symbol_table)?;
 
