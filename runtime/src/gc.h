@@ -43,7 +43,6 @@ typedef struct Allocator {
 ///
 /// Since there is only a global list, this technique is not threadsafe.
 extern struct StackEntry *llvm_gc_root_chain;
-extern void **worklist;
 
 /// Calls Visitor(root, meta) for each GC root on the stack.
 ///        root and meta are exactly the values passed to
@@ -64,7 +63,4 @@ void sweep();
 void setMarked(void *ptr);
 int isMarked(void *ptr);
 Object *extractHeader(void *ptr);
-ObjectInfo *del();
-void add(void *ptr, const void *meta);
-int isEmpty();
 #endif

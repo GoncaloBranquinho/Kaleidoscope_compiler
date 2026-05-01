@@ -16,10 +16,6 @@ struct StackEntry *llvm_gc_root_chain;
 
 Allocator *allocator;
 
-void **worklist;
-
-size_t top;
-
 void init_allocator() {
   allocator = malloc(sizeof(Allocator));
   allocator->start = malloc(ALLOCATOR_SIZE);
@@ -73,8 +69,6 @@ void *gc_new(int isPointer) {
 }
 
 void collect() {
-  worklist = NULL;
-  top = 0;
   visitGCRoots(markFromRoots);
   sweep();
 }
@@ -93,7 +87,7 @@ void mark(void *ptr) {
   void *car = object->isPointer ? *(void **)ptr : NULL;
   if (car != NULL && !isMarked(car)) {
     setMarked(car);
-    add(car, NULL);
+    mark(car);
   }
   ConsCell *cdr = (ConsCell *)((char *)ptr + 8);
   ConsCell *next_cdr = cdr->cdr;
@@ -101,7 +95,7 @@ void mark(void *ptr) {
     void *next_cell = (char *)next_cdr - 8;
     if (!isMarked(next_cell)) {
       setMarked(next_cell);
-      add(next_cell, NULL);
+      mark(next_cell);
     }
   }
 }
@@ -142,7 +136,3 @@ void setMarked(void *ptr) {
 }
 
 Object *extractHeader(void *ptr) { return ((Object *)ptr) - 1; }
-
-int isEmpty() { return top == 0; }
-
-ObjectInfo *del() { return worklist[--top]; }
