@@ -9,11 +9,39 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define ALLOCATOR_SIZE (100 * 1024 * 1024)
+#define CELL_SIZE 18
+
 struct StackEntry *llvm_gc_root_chain;
-Object *heap = NULL;
+
+Allocator *allocator;
 
 void **worklist;
+
 size_t top;
+
+void init_allocator() {
+  allocator = malloc(sizeof(Allocator));
+  allocator->start = malloc(ALLOCATOR_SIZE);
+  allocator->size = 100000;
+  size_t size = ALLOCATOR_SIZE / (CELL_SIZE);
+  char *ptr = (char *)allocator->start;
+  ConsCell *prev = NULL;
+
+  for (size_t i = 0; i < size; i++) {
+    ConsCell *curr = (ConsCell *)(10 + ptr);
+    if (prev) {
+      prev->cdr = curr;
+    } else {
+      allocator->F = curr;
+    }
+    prev = curr;
+    ptr += (CELL_SIZE);
+  }
+  if (prev) {
+    prev->cdr = NULL;
+  }
+}
 
 void visitGCRoots(void (*Visitor)(void **root, const void *meta)) {
   for (struct StackEntry *R = llvm_gc_root_chain; R; R = R->next) {
@@ -29,24 +57,21 @@ void visitGCRoots(void (*Visitor)(void **root, const void *meta)) {
   }
 }
 
-// Todo - implement my own allocator
-void *gc_new(size_t size) {
-  Object *object = malloc(sizeof(Object) + size);
-  if (object == NULL) {
+void *gc_new(int isPointer) {
+  if (allocator->F == NULL) {
     collect();
-    object = malloc(sizeof(Object) + size);
-    if (object == NULL) {
+    if (allocator->F == NULL) {
       fprintf(stderr, "Out of memory");
       return NULL;
     }
   }
+  Object *object = (Object *)((char *)allocator->F - 10);
   object->isMarked = 0;
-  object->next = heap;
-  heap = object;
+  object->isPointer = isPointer;
+  allocator->F = allocator->F->cdr;
   return (void *)(object + 1);
 }
 
-// Todo - malloc and realloc to initialize and extend worklist respectively
 void collect() {
   worklist = NULL;
   top = 0;
@@ -58,34 +83,51 @@ void markFromRoots(void **root, const void *meta) {
   void *ref = *root;
   if (ref != NULL && !isMarked(ref)) {
     setMarked(ref);
-    add(ref, meta);
-    mark();
+    mark(ref);
   }
 }
 
-void mark() {
-  while (!isEmpty()) {
-    ObjectInfo *object = del();
-    Pointers *ptrs = pointers(object);
-    size_t size = ptrs->size;
-    for (size_t i = 0; i < size; i++) {
-      void *child = ptrs->ptrs[i];
-      if (child != NULL && !isMarked(child)) {
-        setMarked(child);
-        add(child, NULL);
-      }
+void mark(void *ptr) {
+
+  Object *object = (Object *)((char *)ptr - 10);
+  void *car = object->isPointer ? *(void **)ptr : NULL;
+  if (car != NULL && !isMarked(car)) {
+    setMarked(car);
+    add(car, NULL);
+  }
+  ConsCell *cdr = (ConsCell *)((char *)ptr + 8);
+  ConsCell *next_cdr = cdr->cdr;
+  if (next_cdr != NULL) {
+    void *next_cell = (char *)next_cdr - 8;
+    if (!isMarked(next_cell)) {
+      setMarked(next_cell);
+      add(next_cell, NULL);
     }
   }
 }
 
-// Todo - remove object from the heap
 void sweep() {
-  for (Object *object = heap; object; object = object->next) {
+  size_t size = ALLOCATOR_SIZE / (CELL_SIZE);
+  allocator->F = NULL;
+  ConsCell *prev = NULL;
+  char *ptr = (char *)allocator->start;
+  for (int i = 0; i < size; i++) {
+    Object *object = (Object *)ptr;
     if (object->isMarked) {
       object->isMarked = 0;
     } else {
-      free(object);
+      ConsCell *curr = (ConsCell *)(ptr + 10);
+      if (!allocator->F) {
+        allocator->F = curr;
+      } else {
+        prev->cdr = curr;
+      }
+      prev = curr;
     }
+    ptr += CELL_SIZE;
+  }
+  if (prev) {
+    prev->cdr = NULL;
   }
 }
 
@@ -104,28 +146,3 @@ Object *extractHeader(void *ptr) { return ((Object *)ptr) - 1; }
 int isEmpty() { return top == 0; }
 
 ObjectInfo *del() { return worklist[--top]; }
-
-void add(void *ptr, const void *meta) {
-  MetaData *meta_data = (MetaData *)meta;
-  ObjectInfo *object_info = malloc(sizeof(ObjectInfo));
-  object_info->ptr = ptr;
-  object_info->meta_data = meta_data;
-  worklist[top++] = object_info;
-}
-
-Pointers *pointers(ObjectInfo *object_info) {
-  MetaData *meta_data = object_info->meta_data;
-  Pointers *pointers = NULL;
-  if (!meta_data) {
-    return pointers;
-  }
-  size_t size = meta_data->numPtrs;
-  void **ptrs = malloc(sizeof(void *) * size);
-  for (size_t i = 0; i < size; i++) {
-    ptrs[i] = (void *)((char *)object_info->ptr + meta_data->fields[i]);
-  }
-  pointers = malloc(sizeof(Pointers));
-  pointers->ptrs = ptrs;
-  pointers->size = size;
-  return pointers;
-}

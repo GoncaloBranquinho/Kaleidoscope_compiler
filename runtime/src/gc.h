@@ -1,6 +1,7 @@
 #ifndef GC_H
 #define GC_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 struct FrameMap {
@@ -18,8 +19,8 @@ struct StackEntry {
 };
 
 typedef struct Object {
-  int isMarked;
-  struct Object *next;
+  bool isMarked;
+  bool isPointer;
 } Object;
 
 typedef struct ObjectInfo {
@@ -27,24 +28,22 @@ typedef struct ObjectInfo {
   struct MetaData *meta_data;
 } ObjectInfo;
 
-typedef struct MetaData {
-  size_t numPtrs;
-  size_t fields[0];
-} MetaData;
+typedef struct ConsCell {
+  struct ConsCell *cdr;
+} ConsCell;
 
-typedef struct Pointers {
+typedef struct Allocator {
+  ConsCell *start;
   size_t size;
-  void **ptrs;
-} Pointers;
+  struct ConsCell *F;
+} Allocator;
 
 /// The head of the singly-linked list of StackEntries.  Functions push
 ///        and pop onto this in their prologue and epilogue.
 ///
 /// Since there is only a global list, this technique is not threadsafe.
 extern struct StackEntry *llvm_gc_root_chain;
-extern Object *heap;
 extern void **worklist;
-extern size_t top;
 
 /// Calls Visitor(root, meta) for each GC root on the stack.
 ///        root and meta are exactly the values passed to
@@ -58,9 +57,9 @@ extern size_t top;
 void visitGCRoots(void (*Visitor)(void **Root, const void *Meta));
 
 void collect();
-void *gc_new(size_t size);
+void *gc_new(int isPointer);
 void markFromRoots(void **Root, const void *Meta);
-void mark();
+void mark(void *ptr);
 void sweep();
 void setMarked(void *ptr);
 int isMarked(void *ptr);
@@ -68,5 +67,4 @@ Object *extractHeader(void *ptr);
 ObjectInfo *del();
 void add(void *ptr, const void *meta);
 int isEmpty();
-Pointers *pointers(ObjectInfo *object_info);
 #endif
