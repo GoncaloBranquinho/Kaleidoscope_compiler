@@ -1,6 +1,7 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     F64(f64),
     I64(i64),
     Unit,
+    List(Vec<Box<Literal>>),
 }

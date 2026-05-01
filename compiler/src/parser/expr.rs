@@ -15,6 +15,7 @@ pub enum ExprKind {
     Call(String, Vec<Expr>),
     ForLoop(String, Expr, Expr, Option<Expr>, Expr),
     Projection(Expr, Expr),
+    Pair(Option<Expr>, Expr),
 }
 
 #[derive(Clone, Debug, PartialEq)]

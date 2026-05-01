@@ -180,6 +180,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             TokenKind::Identifier(_) => self.parse_identifier(),
             TokenKind::Number(_) => self.parse_number(),
             TokenKind::Op('(') => self.parse_paren(),
+            TokenKind::Op('[') => self.parse_square_brackets(),
             TokenKind::Keyword(If) => self.parse_if(),
             TokenKind::Keyword(For) => self.parse_for(),
             TokenKind::Keyword(Var) => self.parse_var(),
@@ -195,7 +196,8 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParserErrorKind> {
-        if !matches!(self.peek_token()?, TokenKind::Op(c) if c.is_ascii() && c != '(' && c != ',') {
+        if !matches!(self.peek_token()?, TokenKind::Op(c) if c.is_ascii() && c != '(' && c != ',' && c != '[')
+        {
             return self.parse_primary();
         }
 
@@ -477,6 +479,14 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                     _ => self.parse_tuple_type(),
                 }
             }
+            TokenKind::Op('[') => {
+                self.consume_token()?;
+                let typ = self.parse_type()?;
+                match self.peek_token()? {
+                    TokenKind::Op(']') => Ok(Box::new(TypeKind::List(Some(typ)))),
+                    t => Err(ParserErrorKind::UnexpectedToken(t)),
+                }
+            }
             t => Err(ParserErrorKind::UnexpectedToken(t)),
         }
     }
@@ -558,6 +568,42 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 self.parse_post_primary(proj)
             }
             _ => unimplemented!(),
+        }
+    }
+    fn parse_square_brackets(&mut self) -> Result<Expr, ParserErrorKind> {
+        self.consume_token()?;
+        if let TokenKind::Op(']') = self.peek_token()? {
+            self.consume_token()?;
+            return Ok(Box::new(ExprKind::Pair(
+                None,
+                Box::new(ExprKind::Literal(Literal::Unit)),
+            )));
+        }
+
+        let v = self.parse_expr()?;
+        let v = self.parse_pair(&v)?;
+
+        match self.peek_token()? {
+            TokenKind::Op(']') => {
+                self.consume_token()?;
+                Ok(v)
+            }
+            t => Err(ParserErrorKind::UnexpectedToken(t)),
+        }
+    }
+    fn parse_pair(&mut self, expr: &Expr) -> Result<Expr, ParserErrorKind> {
+        if !matches!(self.peek_token()?, TokenKind::Op(',')) {
+            Ok(Box::new(ExprKind::Pair(
+                Some(expr.clone()),
+                Box::new(ExprKind::Literal(Literal::Unit)),
+            )))
+        } else {
+            self.consume_token()?;
+            let new_expr = self.parse_expr()?;
+            Ok(Box::new(ExprKind::Pair(
+                Some(expr.clone()),
+                self.parse_pair(&new_expr)?,
+            )))
         }
     }
 }

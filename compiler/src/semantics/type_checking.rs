@@ -208,11 +208,7 @@ impl TypeCheck for Expr {
                 symbol_table.pop();
                 body_type
             }
-            ExprKind::Literal(literal) => match literal {
-                Literal::F64(_) => Ok(Box::new(TypeKind::F64)),
-                Literal::I64(_) => Ok(Box::new(TypeKind::I64)),
-                Literal::Unit => Ok(Box::new(TypeKind::Unit)),
-            },
+            ExprKind::Literal(literal) => literal.type_check(symbol_table),
             ExprKind::Binary(op, left, right) => match op {
                 BinaryOp::Add | BinaryOp::Lt | BinaryOp::Mult | BinaryOp::Sub => {
                     let left_type = left.type_check(symbol_table)?;
@@ -254,14 +250,17 @@ impl TypeCheck for Expr {
                     };
                     let (id_typ, scope) = symbol_table.get(name);
                     if let Some(Some(typ)) = id_typ {
-                        if right_type != typ {
+                        if !matches!(right_type.as_ref(), TypeKind::List(None)) && right_type != typ
+                        {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: typ,
                                 found: right_type,
                             });
                         }
                         Ok(Box::new(TypeKind::Unit))
-                    } else if let Some(None) = id_typ {
+                    } else if let Some(None) = id_typ
+                        && !matches!(right_type.as_ref(), TypeKind::List(None))
+                    {
                         symbol_table.insert(
                             name.clone(),
                             Some(right_type.clone()),
@@ -443,6 +442,48 @@ impl TypeCheck for Expr {
 
                 Ok(t[n as usize].clone())
             }
+            ExprKind::Pair(car, cdr) => {
+                let mut typ = None;
+                if let Some(expr) = car {
+                    typ = Some(expr.type_check(symbol_table)?);
+                    let cdr_type = cdr.type_check(symbol_table)?;
+                    if let TypeKind::List(t) = cdr_type.as_ref()
+                        && &typ != t
+                    {
+                        return Err(SemanticErrorKind::UniqueTypes);
+                    }
+                }
+                Ok(Box::new(TypeKind::List(typ)))
+            }
+        }
+    }
+}
+
+impl TypeCheck for Literal {
+    type Output = Type;
+
+    fn type_check(
+        &mut self,
+        _symbol_table: &mut SymbolTable,
+    ) -> Result<Self::Output, SemanticErrorKind> {
+        match self {
+            Literal::F64(_) => Ok(Box::new(TypeKind::F64)),
+            Literal::I64(_) => Ok(Box::new(TypeKind::I64)),
+            Literal::Unit => Ok(Box::new(TypeKind::Unit)),
+            Literal::List(fields) => {
+                let mut typ = None;
+                for field in fields.iter_mut() {
+                    let curr_typ = field.type_check(_symbol_table)?;
+                    if let Some(typ) = typ
+                        && typ != curr_typ
+                    {
+                        return Err(SemanticErrorKind::UniqueTypes);
+                    }
+
+                    typ = Some(curr_typ);
+                }
+                Ok(Box::new(TypeKind::List(typ)))
+            }
         }
     }
 }
@@ -458,4 +499,5 @@ pub enum SemanticErrorKind {
     UnknownType { name: Type },
     InvalidField { idx: i64, on: Type },
     Immutable { val: Expr },
+    UniqueTypes,
 }

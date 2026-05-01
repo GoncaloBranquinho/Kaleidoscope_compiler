@@ -75,6 +75,10 @@ fn get_type<'ctx>(t: &Type, context: &CodeGenBuilder<'ctx>) -> BasicTypeEnum<'ct
                 .struct_type(&tuple_types, false)
                 .as_basic_type_enum()
         }
+        TypeKind::List(_) => context
+            .ctx
+            .ptr_type(AddressSpace::default())
+            .as_basic_type_enum(),
     }
 }
 
@@ -198,6 +202,9 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
             ExprKind::Literal(Literal::Unit) => {
                 Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
+            }
+            ExprKind::Literal(Literal::List(t)) => {
+                todo!()
             }
             ExprKind::Identifier(name, typ) => {
                 if let Some(value) = context.map.get(name) {
@@ -634,6 +641,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     "extract",
                 )?)
             }
+            ExprKind::Pair(expr_kind, expr_kind1) => todo!(),
         }
     }
 }
@@ -686,7 +694,7 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
                 arg.set_name(&self.args[i - ptr].name);
             }
         }
-
+        fn_value.set_gc("shadow-stack");
         Ok(fn_value)
     }
 }
@@ -703,7 +711,6 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     .insert(proto.name.clone(), proto.clone());
 
                 let fn_value = get_function(&proto.name, context)?;
-                fn_value.set_gc("shadow-stack");
                 if fn_value.get_first_basic_block().is_some() {
                     return Err(CompilerError::Llvm(
                         "Function cannot be redefnied".to_string(),
@@ -996,6 +1003,9 @@ fn print_result<'ctx>(
             print_tuple(&TypeKind::Tuple(tuple_types.clone()), buf, context)?;
             println!();
         }
+        TypeKind::List(_) => {
+            todo!()
+        }
     }
     Ok(())
 }
@@ -1035,6 +1045,9 @@ fn print_tuple<'ctx>(
                 print_tuple(tuple_type, offsets[offset..].to_vec(), context)?;
             }
             print!(")");
+        }
+        TypeKind::List(_) => {
+            todo!()
         }
     }
     Ok(())

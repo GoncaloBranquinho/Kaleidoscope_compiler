@@ -87,6 +87,9 @@ impl fmt::Display for SemanticErrorKind {
             SemanticErrorKind::Immutable { val } => {
                 write!(f, "Cannot mutate '{:?}'", val)
             }
+            SemanticErrorKind::UniqueTypes => {
+                write!(f, "List cannot have different types")
+            }
         }
     }
 }
