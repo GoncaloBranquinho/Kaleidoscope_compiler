@@ -15,7 +15,7 @@ This project is still under development and not yet complete.
 
 It started as a way of studying Rust, the LLVM architecture and its intermediate language representation by re-implementing a small compiler for a toy language similar to the Kaleidoscope example in the [tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/) implementation in C++.
 
-Since I have already completed the tutorial, I am now extending Kaleidoscope to explore new features and design ideas.
+Since I had already completed the tutorial, I decided to extend Kaleidoscope to explore new features and design ideas, such as using a subset of S-expressions to represent the heap layout, as well as implementing my own garbage collector and allocator.
 
 <!-- GETTING STARTED -->
 ## Getting Started
