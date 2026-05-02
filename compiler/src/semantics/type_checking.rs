@@ -470,20 +470,6 @@ impl TypeCheck for Literal {
             Literal::F64(_) => Ok(Box::new(TypeKind::F64)),
             Literal::I64(_) => Ok(Box::new(TypeKind::I64)),
             Literal::Unit => Ok(Box::new(TypeKind::Unit)),
-            Literal::List(fields) => {
-                let mut typ = None;
-                for field in fields.iter_mut() {
-                    let curr_typ = field.type_check(_symbol_table)?;
-                    if let Some(typ) = typ
-                        && typ != curr_typ
-                    {
-                        return Err(SemanticErrorKind::UniqueTypes);
-                    }
-
-                    typ = Some(curr_typ);
-                }
-                Ok(Box::new(TypeKind::List(typ)))
-            }
         }
     }
 }

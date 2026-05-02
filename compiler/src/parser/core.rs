@@ -483,7 +483,10 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
                 self.consume_token()?;
                 let typ = self.parse_type()?;
                 match self.peek_token()? {
-                    TokenKind::Op(']') => Ok(Box::new(TypeKind::List(Some(typ)))),
+                    TokenKind::Op(']') => {
+                        self.consume_token()?;
+                        Ok(Box::new(TypeKind::List(Some(typ))))
+                    }
                     t => Err(ParserErrorKind::UnexpectedToken(t)),
                 }
             }

@@ -4,19 +4,20 @@
 /// Storage of metadata values is elided if the %metadata parameter to
 /// @llvm.gcroot is null.
 #include "gc.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #define ALLOCATOR_SIZE (100 * 1024 * 1024)
-#define CELL_SIZE 18
+#define CELL_SIZE 24
 
 struct StackEntry *llvm_gc_root_chain;
 
 Allocator *allocator;
 
-void init_allocator() {
+int initAllocator() {
   allocator = malloc(sizeof(Allocator));
   allocator->start = malloc(ALLOCATOR_SIZE);
   allocator->size = 100000;
@@ -25,11 +26,11 @@ void init_allocator() {
   ConsCell *prev = NULL;
 
   for (size_t i = 0; i < size; i++) {
-    ConsCell *curr = (ConsCell *)(10 + ptr);
+    ConsCell *curr = (ConsCell *)(16 + ptr);
     if (prev) {
       prev->cdr = curr;
     } else {
-      allocator->F = curr;
+      allocator->f = curr;
     }
     prev = curr;
     ptr += (CELL_SIZE);
@@ -37,34 +38,35 @@ void init_allocator() {
   if (prev) {
     prev->cdr = NULL;
   }
+  return 1;
 }
 
-void visitGCRoots(void (*Visitor)(void **root, const void *meta)) {
-  for (struct StackEntry *R = llvm_gc_root_chain; R; R = R->next) {
+void visitGCRoots(void (*visitor)(void **root, const void *meta)) {
+  for (struct StackEntry *r = llvm_gc_root_chain; r; r = r->next) {
     unsigned i = 0;
 
     // For roots [0, NumMeta), the metadata pointer is in the FrameMap.
-    for (unsigned e = R->map->numMeta; i != e; ++i)
-      Visitor(&R->roots[i], R->map->meta[i]);
+    for (unsigned e = r->map->num_meta; i != e; ++i)
+      visitor(&r->roots[i], r->map->meta[i]);
 
     // For roots [NumMeta, NumRoots), the metadata pointer is null.
-    for (unsigned e = R->map->numRoots; i != e; ++i)
-      Visitor(&R->roots[i], NULL);
+    for (unsigned e = r->map->num_roots; i != e; ++i)
+      visitor(&r->roots[i], NULL);
   }
 }
 
-void *gc_new(int isPointer) {
-  if (allocator->F == NULL) {
+void *gc_new(bool is_pointer) {
+  if (allocator->f == NULL) {
     collect();
-    if (allocator->F == NULL) {
+    if (allocator->f == NULL) {
       fprintf(stderr, "Out of memory");
       return NULL;
     }
   }
-  Object *object = (Object *)((char *)allocator->F - 10);
-  object->isMarked = 0;
-  object->isPointer = isPointer;
-  allocator->F = allocator->F->cdr;
+  Object *object = (Object *)((char *)allocator->f - 16);
+  object->is_marked = 0;
+  object->is_pointer = is_pointer;
+  allocator->f = allocator->f->cdr;
   return (void *)(object + 1);
 }
 
@@ -83,8 +85,8 @@ void markFromRoots(void **root, const void *meta) {
 
 void mark(void *ptr) {
 
-  Object *object = (Object *)((char *)ptr - 10);
-  void *car = object->isPointer ? *(void **)ptr : NULL;
+  Object *object = (Object *)((char *)ptr - 16);
+  void *car = object->is_pointer ? *(void **)ptr : NULL;
   if (car != NULL && !isMarked(car)) {
     setMarked(car);
     mark(car);
@@ -102,17 +104,17 @@ void mark(void *ptr) {
 
 void sweep() {
   size_t size = ALLOCATOR_SIZE / (CELL_SIZE);
-  allocator->F = NULL;
+  allocator->f = NULL;
   ConsCell *prev = NULL;
   char *ptr = (char *)allocator->start;
-  for (int i = 0; i < size; i++) {
+  for (size_t i = 0; i < size; i++) {
     Object *object = (Object *)ptr;
-    if (object->isMarked) {
-      object->isMarked = 0;
+    if (object->is_marked) {
+      object->is_marked = 0;
     } else {
-      ConsCell *curr = (ConsCell *)(ptr + 10);
-      if (!allocator->F) {
-        allocator->F = curr;
+      ConsCell *curr = (ConsCell *)(ptr + 16);
+      if (!allocator->f) {
+        allocator->f = curr;
       } else {
         prev->cdr = curr;
       }
@@ -127,12 +129,12 @@ void sweep() {
 
 int isMarked(void *ptr) {
   Object *object = extractHeader(ptr);
-  return object->isMarked;
+  return object->is_marked;
 }
 
 void setMarked(void *ptr) {
   Object *object = extractHeader(ptr);
-  object->isMarked = 1;
+  object->is_marked = 1;
 }
 
 Object *extractHeader(void *ptr) { return ((Object *)ptr) - 1; }

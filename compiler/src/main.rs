@@ -34,7 +34,7 @@ pub fn compile(
         }
     };
 
-    println!("Before type checknig: {:?}", ast);
+    //println!("Before type checknig: {:?}", ast);
 
     ast.type_check(symbol_table)?;
 
@@ -69,6 +69,17 @@ fn main() -> Result<(), CompilerError> {
     let mut symbol_table = SymbolTable::new();
 
     println!("Welcome to kaleipl.");
+
+    if let Err(error) = compile(
+        "extern initAllocator()
+        initAllocator()",
+        &mut codegen_builder,
+        &mut jit,
+        &mut binop_precedence,
+        &mut symbol_table,
+    ) {
+        eprintln!("{error}");
+    }
 
     loop {
         print!("{}", ">> ".yellow().bold());

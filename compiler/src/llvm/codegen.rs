@@ -118,6 +118,16 @@ fn create_entry_block_alloca<'ctx>(
     Ok(builder.build_alloca(t, var_name)?)
 }
 
+fn gc_new_function<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> FunctionValue<'ctx> {
+    if let Some(gc_new) = context.module.get_function("gc_new") {
+        gc_new
+    } else {
+        let return_type = context.ctx.ptr_type(AddressSpace::default());
+        let fn_type = return_type.fn_type(&[context.ctx.bool_type().into()], false);
+        context.module.add_function("gc_new", fn_type, None)
+    }
+}
+
 pub struct CodeGenBuilder<'ctx> {
     pub ctx: &'ctx Context,
     pub tsc: &'ctx LLVMOrcThreadSafeContextRef,
@@ -202,9 +212,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
             ExprKind::Literal(Literal::Unit) => {
                 Ok(context.ctx.bool_type().const_zero().as_basic_value_enum())
-            }
-            ExprKind::Literal(Literal::List(t)) => {
-                todo!()
             }
             ExprKind::Identifier(name, typ) => {
                 if let Some(value) = context.map.get(name) {
@@ -641,7 +648,62 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     "extract",
                 )?)
             }
-            ExprKind::Pair(expr_kind, expr_kind1) => todo!(),
+            ExprKind::Pair(car, cdr) => {
+                let fn_value = gc_new_function(context);
+                let arg = if let Some(car) = car.as_ref() {
+                    if let ExprKind::Pair(_, _) = car.as_ref() {
+                        context
+                            .ctx
+                            .bool_type()
+                            .const_int(1, false)
+                            .as_basic_value_enum()
+                    } else {
+                        context.ctx.bool_type().const_zero().as_basic_value_enum()
+                    }
+                } else {
+                    context.ctx.bool_type().const_zero().as_basic_value_enum()
+                };
+
+                let call = context
+                    .builder
+                    .build_call(fn_value, &[arg.into()], "car_ptr")?;
+
+                let car_ptr = call
+                    .try_as_basic_value()
+                    .basic()
+                    .ok_or(CompilerError::Llvm(
+                        "Expected function to return a value".to_string(),
+                    ))?
+                    .into_pointer_value();
+
+                if let Some(car) = car {
+                    let car_val = car.codegen(context)?;
+                    context.builder.build_store(car_ptr, car_val)?;
+                } else {
+                    context.builder.build_store(
+                        car_ptr,
+                        context.ctx.ptr_type(AddressSpace::default()).const_null(),
+                    )?;
+                }
+                let cdr_val = cdr.codegen(context)?;
+                let cdr_ptr = unsafe {
+                    context.builder.build_gep(
+                        context.ctx.i8_type(),
+                        car_ptr,
+                        &[context.ctx.i64_type().const_int(8, false)],
+                        "cdr_ptr",
+                    )
+                }?;
+                if let ExprKind::Literal(Literal::Unit) = cdr.as_ref() {
+                    context.builder.build_store(
+                        cdr_ptr,
+                        context.ctx.ptr_type(AddressSpace::default()).const_null(),
+                    )?;
+                } else {
+                    context.builder.build_store(cdr_ptr, cdr_val)?;
+                }
+                Ok(car_ptr.as_basic_value_enum())
+            }
         }
     }
 }
@@ -772,6 +834,9 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                         context.builder.build_store(arg, value)?;
                         context.builder.build_return(None)?;
                     }
+                    Ok(BasicValueEnum::PointerValue(value)) => {
+                        context.builder.build_return(Some(&value))?;
+                    }
 
                     _ => {}
                 }
@@ -821,6 +886,18 @@ impl KaleidoscopeJIT {
                 std::ptr::null_mut(),
             );
             LLVMOrcJITDylibAddGenerator(dylib, generator);
+
+            let mut generator = std::ptr::null_mut();
+            let path_to_lib = CString::new("target/debug/libgc.so").unwrap();
+            LLVMOrcCreateDynamicLibrarySearchGeneratorForPath(
+                &mut generator,
+                path_to_lib.as_ptr(),
+                0,
+                None,
+                std::ptr::null_mut(),
+            );
+            LLVMOrcJITDylibAddGenerator(dylib, generator);
+
             Ok(KaleidoscopeJIT { lljit })
         }
     }
@@ -1003,8 +1080,25 @@ fn print_result<'ctx>(
             print_tuple(&TypeKind::Tuple(tuple_types.clone()), buf, context)?;
             println!();
         }
+        // make it recursive
         TypeKind::List(_) => {
-            todo!()
+            let res = jit.call::<*const u8>(executer_addr);
+            print!("[");
+            unsafe {
+                let mut cell = res;
+                let mut flag = false;
+                while !cell.is_null() {
+                    let car = *(cell as *const u64);
+                    let cdr = *(cell.add(8) as *const *const u8);
+                    if flag {
+                        print!(", ");
+                    }
+                    print!("{}", car);
+                    cell = cdr;
+                    flag = true;
+                }
+            }
+            println!("]");
         }
     }
     Ok(())
