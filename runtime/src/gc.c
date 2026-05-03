@@ -10,22 +10,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define ALLOCATOR_SIZE (100 * 1024 * 1024)
+#define NUM_OF_CELLS 100000
 #define CELL_SIZE 24
+#define ALLOCATOR_SIZE (NUM_OF_CELLS * CELL_SIZE)
 
-struct StackEntry *llvm_gc_root_chain;
+struct StackEntry *llvm_gc_root_chain = NULL;
 
-Allocator *allocator;
+Allocator *allocator = NULL;
 
 int initAllocator() {
   allocator = malloc(sizeof(Allocator));
-  allocator->start = malloc(ALLOCATOR_SIZE);
-  allocator->size = 100000;
+  allocator->start = (void *)malloc(ALLOCATOR_SIZE);
+  allocator->size = ALLOCATOR_SIZE;
   size_t size = ALLOCATOR_SIZE / (CELL_SIZE);
   char *ptr = (char *)allocator->start;
   ConsCell *prev = NULL;
 
   for (size_t i = 0; i < size; i++) {
+    Object *object = (Object *)ptr;
+    object->is_marked = 0;
+    object->is_pointer = 0;
     ConsCell *curr = (ConsCell *)(16 + ptr);
     if (prev) {
       prev->cdr = curr;
@@ -41,26 +45,24 @@ int initAllocator() {
   return 1;
 }
 
-void visitGCRoots(void (*visitor)(void **root, const void *meta)) {
+void visitGCRoots(void (*visitor)(void **root)) {
   for (struct StackEntry *r = llvm_gc_root_chain; r; r = r->next) {
     unsigned i = 0;
-
     // For roots [0, NumMeta), the metadata pointer is in the FrameMap.
-    for (unsigned e = r->map->num_meta; i != e; ++i)
-      visitor(&r->roots[i], r->map->meta[i]);
 
     // For roots [NumMeta, NumRoots), the metadata pointer is null.
-    for (unsigned e = r->map->num_roots; i != e; ++i)
-      visitor(&r->roots[i], NULL);
+    for (unsigned e = r->map->num_roots; i != e; ++i) {
+      visitor((void **)r->roots[i]);
+    }
   }
 }
 
-void *gc_new(bool is_pointer) {
+void *gc_new(int32_t is_pointer) {
   if (allocator->f == NULL) {
     collect();
     if (allocator->f == NULL) {
-      fprintf(stderr, "Out of memory");
-      return NULL;
+      fprintf(stderr, "Out of memory!\n");
+      abort();
     }
   }
   Object *object = (Object *)((char *)allocator->f - 16);
@@ -70,12 +72,21 @@ void *gc_new(bool is_pointer) {
   return (void *)(object + 1);
 }
 
+struct StackEntry *get_gc_root_chain() { return llvm_gc_root_chain; }
+
+void gc_pop() { llvm_gc_root_chain = llvm_gc_root_chain->next; }
+
+void gc_push(struct StackEntry *se) {
+  se->next = llvm_gc_root_chain;
+  llvm_gc_root_chain = se;
+}
+
 void collect() {
   visitGCRoots(markFromRoots);
   sweep();
 }
 
-void markFromRoots(void **root, const void *meta) {
+void markFromRoots(void **root) {
   void *ref = *root;
   if (ref != NULL && !isMarked(ref)) {
     setMarked(ref);
@@ -84,20 +95,21 @@ void markFromRoots(void **root, const void *meta) {
 }
 
 void mark(void *ptr) {
-
-  Object *object = (Object *)((char *)ptr - 16);
+  Object *object = extractHeader(ptr);
   void *car = object->is_pointer ? *(void **)ptr : NULL;
   if (car != NULL && !isMarked(car)) {
     setMarked(car);
     mark(car);
   }
   ConsCell *cdr = (ConsCell *)((char *)ptr + 8);
-  ConsCell *next_cdr = cdr->cdr;
-  if (next_cdr != NULL) {
-    void *next_cell = (char *)next_cdr - 8;
-    if (!isMarked(next_cell)) {
-      setMarked(next_cell);
-      mark(next_cell);
+  if (cdr != NULL) {
+    ConsCell *next_cdr = cdr->cdr;
+    if (next_cdr != NULL) {
+      void *next_cell = (void *)((char *)next_cdr - 8);
+      if (!isMarked(next_cell)) {
+        setMarked(next_cell);
+        mark(next_cell);
+      }
     }
   }
 }
@@ -109,7 +121,7 @@ void sweep() {
   char *ptr = (char *)allocator->start;
   for (size_t i = 0; i < size; i++) {
     Object *object = (Object *)ptr;
-    if (object->is_marked) {
+    if (object->is_marked == 1) {
       object->is_marked = 0;
     } else {
       ConsCell *curr = (ConsCell *)(ptr + 16);

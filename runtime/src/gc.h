@@ -5,9 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 struct FrameMap {
-  int32_t num_roots;   //< Number of roots in stack frame.
-  int32_t num_meta;    //< Number of metadata entries.  May be < NumRoots.
-  const void *meta[0]; //< Metadata for each root.
+  int32_t num_roots; //< Number of roots in stack frame.
 };
 
 /// A link in the dynamic shadow stack.  One of these is embedded in
@@ -28,7 +26,7 @@ typedef struct ConsCell {
 } ConsCell;
 
 typedef struct Allocator {
-  ConsCell *start;
+  void *start;
   size_t size;
   ConsCell *f;
 } Allocator;
@@ -49,11 +47,13 @@ extern struct Allocator *allocator;
 ///
 /// @param Visitor A function to invoke for every GC root on the stack.
 ///
-void visitGCRoots(void (*visitor)(void **root, const void *meta));
-
+void visitGCRoots(void (*visitor)(void **root));
+struct StackEntry *get_gc_root_chain();
+void gc_pop();
+void gc_push(struct StackEntry *se);
 void collect();
-void *gc_new(bool is_pointer);
-void markFromRoots(void **root, const void *meta);
+void *gc_new(int32_t is_pointer);
+void markFromRoots(void **root);
 void mark(void *ptr);
 void sweep();
 void setMarked(void *ptr);

@@ -112,10 +112,24 @@ fn create_entry_block_alloca<'ctx>(
         .get_first_basic_block()
         .ok_or_else(|| CompilerError::Llvm("No basic block".to_string()))?;
     builder.position_at_end(block);
-    if let Some(inst) = block.get_first_instruction() {
-        builder.position_before(&inst);
+    let alloca = builder.build_alloca(t, var_name)?;
+    if t.is_pointer_type() {
+        let function_name = fn_value.get_name().to_string_lossy().to_string();
+        let (size, roots) = context
+            .function_prologue_info
+            .get_mut(&function_name)
+            .unwrap();
+        *size += 1;
+        roots.push(alloca);
+        context.builder.build_store(
+            alloca,
+            context.ctx.ptr_type(AddressSpace::default()).const_null(),
+        )?;
+        let fn_value = gc_root_function(context);
+        let ptr_value = context.ctx.ptr_type(AddressSpace::default()).const_null();
+        builder.build_call(fn_value, &[alloca.into(), ptr_value.into()], "")?;
     }
-    Ok(builder.build_alloca(t, var_name)?)
+    Ok(alloca)
 }
 
 fn gc_new_function<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> FunctionValue<'ctx> {
@@ -123,9 +137,121 @@ fn gc_new_function<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> FunctionValue<'c
         gc_new
     } else {
         let return_type = context.ctx.ptr_type(AddressSpace::default());
-        let fn_type = return_type.fn_type(&[context.ctx.bool_type().into()], false);
+        let fn_type = return_type.fn_type(&[context.ctx.i32_type().into()], false);
         context.module.add_function("gc_new", fn_type, None)
     }
+}
+
+fn gc_root_function<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> FunctionValue<'ctx> {
+    if let Some(gc_root) = context.module.get_function("llvm.gcroot") {
+        gc_root
+    } else {
+        let ptr_type = context.ctx.ptr_type(AddressSpace::default());
+        let return_type = context.ctx.void_type();
+        let fn_type = return_type.fn_type(&[ptr_type.into(), ptr_type.into()], false);
+        context.module.add_function("llvm.gcroot", fn_type, None)
+    }
+}
+
+fn generate_epilogue<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> Result<(), CompilerError> {
+    let fn_value = if let Some(gc_pop) = context.module.get_function("gc_pop") {
+        gc_pop
+    } else {
+        let return_type = context.ctx.void_type();
+        let fn_type = return_type.fn_type(&[], false);
+        context.module.add_function("gc_pop", fn_type, None)
+    };
+    context
+        .builder
+        .build_call(fn_value, &[], "curr_gc_root_chain")?;
+
+    Ok(())
+}
+
+fn generate_prologue<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> Result<(), CompilerError> {
+    let i32_type = context.ctx.i32_type();
+    let ptr_type = context.ctx.ptr_type(AddressSpace::default());
+    let frame_map_type = context.ctx.struct_type(&[i32_type.into()], false);
+    let block = context
+        .builder
+        .get_insert_block()
+        .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+    let function = block
+        .get_parent()
+        .ok_or_else(|| CompilerError::Llvm("Basic Block has no parent function".to_string()))?;
+
+    let function_name = function.get_name().to_string_lossy().to_string();
+
+    let num_roots = context
+        .function_prologue_info
+        .get(&function_name)
+        .unwrap()
+        .0;
+
+    let frame_map_val = frame_map_type.const_named_struct(&[context
+        .ctx
+        .i32_type()
+        .const_int(num_roots as u64, false)
+        .into()]);
+
+    let frame_map_ptr =
+        create_entry_block_alloca(context, function, "frame_map_ptr", frame_map_type.into())?;
+
+    context.builder.build_store(frame_map_ptr, frame_map_val)?;
+
+    let roots_vec_type = ptr_type.array_type(num_roots as u32);
+
+    let stack_entry_type = context.ctx.struct_type(
+        &[ptr_type.into(), ptr_type.into(), roots_vec_type.into()],
+        false,
+    );
+
+    let stack_entry_ptr =
+        create_entry_block_alloca(context, function, "gc_stack_entry", stack_entry_type.into())?;
+
+    let map_ptr = context.builder.build_struct_gep(
+        stack_entry_type,
+        stack_entry_ptr,
+        1,
+        "stack_entry_map",
+    )?;
+    context.builder.build_store(map_ptr, frame_map_ptr)?;
+
+    if num_roots > 0 {
+        let roots = &context
+            .function_prologue_info
+            .get(&function_name)
+            .unwrap()
+            .1;
+
+        for (i, root) in roots.iter().enumerate() {
+            let ith_element = unsafe {
+                context.builder.build_in_bounds_gep(
+                    stack_entry_type,
+                    stack_entry_ptr,
+                    &[
+                        context.ctx.i32_type().const_zero(),
+                        context.ctx.i32_type().const_int(2, false),
+                        context.ctx.i32_type().const_int(i as u64, false),
+                    ],
+                    &format!("roots_{i}"),
+                )?
+            };
+            context.builder.build_store(ith_element, *root)?;
+        }
+    }
+
+    let gc_push = if let Some(gc_push) = context.module.get_function("gc_push") {
+        gc_push
+    } else {
+        let return_type = context.ctx.void_type();
+        let fn_type = return_type.fn_type(&[ptr_type.into()], false);
+        context.module.add_function("gc_push", fn_type, None)
+    };
+    context
+        .builder
+        .build_call(gc_push, &[stack_entry_ptr.into()], "")?;
+    Ok(())
 }
 
 pub struct CodeGenBuilder<'ctx> {
@@ -136,6 +262,7 @@ pub struct CodeGenBuilder<'ctx> {
     pub target_machine: TargetMachine,
     pub map: HashMap<String, PointerValue<'ctx>>,
     pub function_protos: HashMap<String, Prototype>,
+    pub function_prologue_info: HashMap<String, (i32, Vec<PointerValue<'ctx>>)>,
 }
 
 pub trait CodeGen<'ctx> {
@@ -183,6 +310,7 @@ impl<'ctx> CodeGenBuilder<'ctx> {
         let builder = ctx.create_builder();
         let map = HashMap::new();
         let function_protos = HashMap::new();
+        let function_prologue_info = HashMap::new();
 
         Ok(CodeGenBuilder {
             ctx,
@@ -192,6 +320,7 @@ impl<'ctx> CodeGenBuilder<'ctx> {
             target_machine,
             map,
             function_protos,
+            function_prologue_info,
         })
     }
 }
@@ -654,11 +783,11 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     if let ExprKind::Pair(_, _) = car.as_ref() {
                         context
                             .ctx
-                            .bool_type()
+                            .i32_type()
                             .const_int(1, false)
                             .as_basic_value_enum()
                     } else {
-                        context.ctx.bool_type().const_zero().as_basic_value_enum()
+                        context.ctx.i32_type().const_zero().as_basic_value_enum()
                     }
                 } else {
                     context.ctx.bool_type().const_zero().as_basic_value_enum()
@@ -667,7 +796,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let call = context
                     .builder
                     .build_call(fn_value, &[arg.into()], "car_ptr")?;
-
                 let car_ptr = call
                     .try_as_basic_value()
                     .basic()
@@ -675,15 +803,31 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         "Expected function to return a value".to_string(),
                     ))?
                     .into_pointer_value();
+                let block = context
+                    .builder
+                    .get_insert_block()
+                    .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+                let function = block.get_parent().ok_or_else(|| {
+                    CompilerError::Llvm("Basic Block has no parent function".to_string())
+                })?;
 
+                let aux_alloca = create_entry_block_alloca(
+                    context,
+                    function,
+                    "aux_alloca",
+                    context
+                        .ctx
+                        .ptr_type(AddressSpace::default())
+                        .as_basic_type_enum(),
+                )?;
                 if let Some(car) = car {
                     let car_val = car.codegen(context)?;
                     context.builder.build_store(car_ptr, car_val)?;
+                    context.builder.build_store(aux_alloca, car_ptr)?;
                 } else {
-                    context.builder.build_store(
-                        car_ptr,
-                        context.ctx.ptr_type(AddressSpace::default()).const_null(),
-                    )?;
+                    let null_ptr = context.ctx.ptr_type(AddressSpace::default()).const_null();
+                    context.builder.build_store(car_ptr, null_ptr)?;
+                    context.builder.build_store(aux_alloca, car_ptr)?;
                 }
                 let cdr_val = cdr.codegen(context)?;
                 let cdr_ptr = unsafe {
@@ -756,7 +900,6 @@ impl<'ctx> CodeGen<'ctx> for Prototype {
                 arg.set_name(&self.args[i - ptr].name);
             }
         }
-        fn_value.set_gc("shadow-stack");
         Ok(fn_value)
     }
 }
@@ -768,19 +911,33 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
             DeclKind::Extern(proto) => proto.codegen(context),
 
             DeclKind::Function(proto, body) => {
+                if context.module.get_global("llvm_gc_root_chain").is_none() {
+                    let ptr_type = context.ctx.ptr_type(AddressSpace::default());
+                    let global = context
+                        .module
+                        .add_global(ptr_type, None, "llvm_gc_root_chain");
+                    global.set_linkage(inkwell::module::Linkage::External);
+                    global.set_initializer(&ptr_type.const_null()); // maybe delete?
+                }
                 context
                     .function_protos
                     .insert(proto.name.clone(), proto.clone());
 
                 let fn_value = get_function(&proto.name, context)?;
+                fn_value.set_gc("shadow-stack");
+
                 if fn_value.get_first_basic_block().is_some() {
                     return Err(CompilerError::Llvm(
                         "Function cannot be redefnied".to_string(),
                     ));
                 }
+                context
+                    .function_prologue_info
+                    .insert(proto.name.clone(), (0, Vec::new()));
 
+                let prologue_block = context.ctx.append_basic_block(fn_value, "prologue");
                 let basic_block = context.ctx.append_basic_block(fn_value, "entry");
-
+                let epilogue_block = context.ctx.append_basic_block(fn_value, "epilogue");
                 context.builder.position_at_end(basic_block);
                 context.map.clear();
 
@@ -795,7 +952,6 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                         "Incorrect # arguments passed".to_string(),
                     ));
                 }
-
                 for (i, arg) in fn_value.get_param_iter().enumerate() {
                     //arg.set_name(&proto.args[i].name);
                     if flag || i != 0 {
@@ -813,6 +969,14 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                 }
 
                 let body_value = body.codegen(context);
+                context.builder.position_at_end(prologue_block);
+                generate_prologue(context)?;
+                context.builder.build_unconditional_branch(basic_block)?;
+
+                context.builder.position_at_end(basic_block);
+                context.builder.build_unconditional_branch(epilogue_block)?;
+                context.builder.position_at_end(epilogue_block);
+                generate_epilogue(context)?;
 
                 match body_value {
                     Err(error) => {
@@ -1080,25 +1244,10 @@ fn print_result<'ctx>(
             print_tuple(&TypeKind::Tuple(tuple_types.clone()), buf, context)?;
             println!();
         }
-        // make it recursive
         TypeKind::List(_) => {
             let res = jit.call::<*const u8>(executer_addr);
-            print!("[");
-            unsafe {
-                let mut cell = res;
-                let mut flag = false;
-                while !cell.is_null() {
-                    let car = *(cell as *const u64);
-                    let cdr = *(cell.add(8) as *const *const u8);
-                    if flag {
-                        print!(", ");
-                    }
-                    print!("{}", car);
-                    cell = cdr;
-                    flag = true;
-                }
-            }
-            println!("]");
+            print_pair(res);
+            println!();
         }
     }
     Ok(())
@@ -1145,4 +1294,28 @@ fn print_tuple<'ctx>(
         }
     }
     Ok(())
+}
+
+fn print_pair(res: *const u8) {
+    print!("[");
+    unsafe {
+        let mut cell = res;
+        let mut flag = false;
+        while !cell.is_null() {
+            if flag {
+                print!(",");
+            }
+            let is_pointer = *(cell.sub(4) as *const i32) == 1;
+            if is_pointer {
+                print_pair(*(cell as *const *const u8));
+            } else {
+                let car = *(cell as *const u64);
+                print!("{}", car);
+            }
+            let cdr = *(cell.add(8) as *const *const u8);
+            cell = cdr;
+            flag = true;
+        }
+    }
+    print!("]");
 }
