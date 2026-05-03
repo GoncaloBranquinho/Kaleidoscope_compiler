@@ -779,18 +779,23 @@ impl<'ctx> CodeGen<'ctx> for Expr {
             }
             ExprKind::Pair(car, cdr) => {
                 let fn_value = gc_new_function(context);
-                let arg = if let Some(car) = car.as_ref() {
-                    if let ExprKind::Pair(_, _) = car.as_ref() {
-                        context
-                            .ctx
-                            .i32_type()
-                            .const_int(1, false)
-                            .as_basic_value_enum()
-                    } else {
-                        context.ctx.i32_type().const_zero().as_basic_value_enum()
-                    }
+                let car_val = if let Some(car) = car {
+                    car.codegen(context)?
                 } else {
-                    context.ctx.bool_type().const_zero().as_basic_value_enum()
+                    context
+                        .ctx
+                        .ptr_type(AddressSpace::default())
+                        .const_null()
+                        .as_basic_value_enum()
+                };
+                let arg = if car_val.is_pointer_value() && !car_val.into_pointer_value().is_null() {
+                    context
+                        .ctx
+                        .i32_type()
+                        .const_int(1, false)
+                        .as_basic_value_enum()
+                } else {
+                    context.ctx.i32_type().const_zero().as_basic_value_enum()
                 };
 
                 let call = context
@@ -820,15 +825,10 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         .ptr_type(AddressSpace::default())
                         .as_basic_type_enum(),
                 )?;
-                if let Some(car) = car {
-                    let car_val = car.codegen(context)?;
-                    context.builder.build_store(car_ptr, car_val)?;
-                    context.builder.build_store(aux_alloca, car_ptr)?;
-                } else {
-                    let null_ptr = context.ctx.ptr_type(AddressSpace::default()).const_null();
-                    context.builder.build_store(car_ptr, null_ptr)?;
-                    context.builder.build_store(aux_alloca, car_ptr)?;
-                }
+                context.builder.build_store(car_ptr, car_val)?;
+
+                context.builder.build_store(aux_alloca, car_ptr)?;
+
                 let cdr_val = cdr.codegen(context)?;
                 let cdr_ptr = unsafe {
                     context.builder.build_gep(
@@ -916,8 +916,8 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     let global = context
                         .module
                         .add_global(ptr_type, None, "llvm_gc_root_chain");
-                    global.set_linkage(inkwell::module::Linkage::External);
-                    global.set_initializer(&ptr_type.const_null()); // maybe delete?
+                    global.set_linkage(inkwell::module::Linkage::WeakAny);
+                    global.set_initializer(&ptr_type.const_null());
                 }
                 context
                     .function_protos

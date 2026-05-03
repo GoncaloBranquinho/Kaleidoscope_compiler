@@ -57,6 +57,8 @@ void visitGCRoots(void (*visitor)(void **root)) {
   }
 }
 
+// todo - make the stack entry dynamic, instead of pushing all alocas during the
+// prologue phase
 void *gc_new(int32_t is_pointer) {
   if (allocator->f == NULL) {
     collect();
