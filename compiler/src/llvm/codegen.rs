@@ -7,6 +7,7 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{AnyType, BasicType, BasicTypeEnum};
 use inkwell::values::{
@@ -782,13 +783,13 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let car_val = if let Some(car) = car {
                     car.codegen(context)?
                 } else {
-                    context
+                    return Ok(context
                         .ctx
                         .ptr_type(AddressSpace::default())
                         .const_null()
-                        .as_basic_value_enum()
+                        .as_basic_value_enum());
                 };
-                let arg = if car_val.is_pointer_value() && !car_val.into_pointer_value().is_null() {
+                let arg = if car_val.is_pointer_value() {
                     context
                         .ctx
                         .i32_type()
@@ -1010,7 +1011,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 // optimizing the newly created function
 
-                /*let options = PassBuilderOptions::create();
+                let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -1018,7 +1019,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }*/
+                }
 
                 Ok(fn_value)
             }
