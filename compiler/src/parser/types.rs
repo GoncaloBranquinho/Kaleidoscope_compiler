@@ -6,5 +6,6 @@ pub enum TypeKind {
     I64,
     Unit,
     Tuple(Vec<Type>),
-    List(Option<Type>),
+    List(Type),
+    Nil,
 }

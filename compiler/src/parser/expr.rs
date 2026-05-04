@@ -7,15 +7,20 @@ pub enum ExprKind {
     Identifier(String, Option<Type>),
     Var(Vec<VarInfo>, Expr),
     Literal(Literal),
-    Tuple(Vec<Expr>),
+    Cons(Vec<Expr>, ConsKind),
     Binary(BinaryOp, Expr, Expr),
     Seq(Vec<Expr>),
     Unary(UnaryOp, Expr),
     IfThenElse(Expr, Expr, Expr),
     Call(String, Vec<Expr>),
     ForLoop(String, Expr, Expr, Option<Expr>, Expr),
-    Projection(Expr, Expr),
-    Pair(Option<Expr>, Expr),
+    Projection(Expr, Expr, Option<Type>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConsKind {
+    List,
+    Tuple,
 }
 
 #[derive(Clone, Debug, PartialEq)]

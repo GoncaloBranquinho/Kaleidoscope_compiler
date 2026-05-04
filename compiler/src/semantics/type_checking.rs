@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use crate::parser::{
     BinaryOp, DeclKind, Expr, ExprKind, Literal, Program, Prototype, Type, TypeKind,
-    UnaryOp::UserDefined,
+    UnaryOp::UserDefined, expr::ConsKind,
 };
 
 pub fn compare_types(t1: &Type, t2: &Type) -> bool {
     match (t1.as_ref(), t2.as_ref()) {
-        (TypeKind::List(None), TypeKind::List(_)) => true,
-        (TypeKind::List(_), TypeKind::List(None)) => true,
+        (TypeKind::Nil, TypeKind::List(_)) => true,
+        (TypeKind::List(_), TypeKind::Nil) => true,
         _ => t1 == t2,
     }
 }
@@ -231,7 +231,7 @@ impl TypeCheck for Expr {
                     let right_type = right.type_check(symbol_table)?;
                     let name = match left.as_ref() {
                         ExprKind::Identifier(name, _) => name,
-                        ExprKind::Projection(id, _) => {
+                        ExprKind::Projection(id, _, _) => {
                             let left_type = left_type?;
                             if !compare_types(&left_type, &right_type) {
                                 return Err(SemanticErrorKind::TypeMismatch {
@@ -239,10 +239,9 @@ impl TypeCheck for Expr {
                                     found: right_type,
                                 });
                             }
-                            // wrong??
                             if !matches!(
                                 id.as_ref(),
-                                ExprKind::Identifier(_, _) | ExprKind::Projection(_, _)
+                                ExprKind::Identifier(_, _) | ExprKind::Projection(_, _, _)
                             ) {
                                 return Err(SemanticErrorKind::Immutable { val: left.clone() });
                             }
@@ -401,19 +400,59 @@ impl TypeCheck for Expr {
                 }
                 Ok(Box::new(TypeKind::Unit))
             }
-            ExprKind::Tuple(exprs) => {
+            ExprKind::Cons(exprs, kind) => {
                 let mut types = Vec::new();
                 for expr in exprs.iter_mut() {
                     types.push(expr.type_check(symbol_table)?);
                 }
-                Ok(Box::new(TypeKind::Tuple(types)))
+                match kind {
+                    ConsKind::List => {
+                        if !types.is_empty() {
+                            let t1 = types[0].clone();
+                            let mut i = 1;
+                            while i < types.len() {
+                                if !compare_types(&t1, &types[i]) {
+                                    return Err(SemanticErrorKind::UniqueTypes);
+                                }
+                                i += 1;
+                            }
+                            Ok(Box::new(TypeKind::List(t1)))
+                        } else {
+                            Ok(Box::new(TypeKind::Nil))
+                        }
+                    }
+                    ConsKind::Tuple => Ok(Box::new(TypeKind::Tuple(types))),
+                }
             }
-            ExprKind::Projection(val, idx) => {
+            ExprKind::Projection(val, idx, result_typ) => {
                 let val_type = val.type_check(symbol_table)?;
+
+                let idx_type = idx.type_check(symbol_table)?;
+
+                let n = match idx.as_ref() {
+                    ExprKind::Literal(Literal::I64(n)) => Some(*n),
+                    _ => None,
+                };
+
+                if idx_type.as_ref() != &TypeKind::I64 {
+                    return Err(SemanticErrorKind::TypeMismatch {
+                        expected: Box::new(TypeKind::I64),
+                        found: idx_type,
+                    });
+                }
 
                 let t = match val_type.as_ref() {
                     TypeKind::Tuple(t) => t,
+                    TypeKind::List(t) => {
+                        *result_typ = Some(t.clone());
+                        return Ok(t.clone());
+                    }
+                    TypeKind::Nil => {
+                        *result_typ = Some(val_type.clone());
+                        return Ok(val_type);
+                    }
                     _ => {
+                        //change errorKind
                         return Err(SemanticErrorKind::TypeMismatch {
                             expected: Box::new(TypeKind::Tuple(vec![])),
                             found: val_type,
@@ -421,46 +460,17 @@ impl TypeCheck for Expr {
                     }
                 };
 
-                let idx_type = idx.type_check(symbol_table)?;
-                let n = match idx.as_ref() {
-                    ExprKind::Literal(Literal::I64(n)) => *n,
-                    _ => {
-                        return Err(SemanticErrorKind::TypeMismatch {
-                            expected: Box::new(TypeKind::I64),
-                            found: idx_type,
-                        });
-                    }
-                };
+                let n_val = n.unwrap();
 
-                if n < 0 || n >= t.len() as i64 {
+                if n_val < 0 || n_val >= t.len() as i64 {
                     return Err(SemanticErrorKind::InvalidField {
-                        idx: n,
+                        idx: n_val,
                         on: Box::new(TypeKind::Tuple(t.clone())),
                     });
                 }
-
-                Ok(t[n as usize].clone())
-            }
-            ExprKind::Pair(car, cdr) => {
-                if let Some(expr) = car {
-                    let car_type = expr.type_check(symbol_table)?;
-                    let cdr_type = cdr.type_check(symbol_table)?;
-                    match cdr_type.as_ref() {
-                        TypeKind::List(None) | TypeKind::Unit => {
-                            Ok(Box::new(TypeKind::List(Some(car_type))))
-                        }
-                        TypeKind::List(Some(t)) => {
-                            if !compare_types(&car_type, t) {
-                                Err(SemanticErrorKind::UniqueTypes)
-                            } else {
-                                Ok(Box::new(TypeKind::List(Some(car_type))))
-                            }
-                        }
-                        _ => Err(SemanticErrorKind::UniqueTypes),
-                    }
-                } else {
-                    Ok(Box::new(TypeKind::List(None)))
-                }
+                let result = t[n_val as usize].clone();
+                *result_typ = Some(result.clone());
+                Ok(result)
             }
         }
     }
@@ -489,7 +499,6 @@ pub enum SemanticErrorKind {
     InvalidArgumentSize { expected: usize, found: usize },
     UnknownFunction { name: String },
     UnknownOperator { name: char },
-    UnknownType { name: Type },
     InvalidField { idx: i64, on: Type },
     Immutable { val: Expr },
     UniqueTypes,

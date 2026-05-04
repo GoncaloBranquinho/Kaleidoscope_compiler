@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define NUM_OF_CELLS 100000
+#define NUM_OF_CELLS 1
 #define CELL_SIZE 24
 #define ALLOCATOR_SIZE (NUM_OF_CELLS * CELL_SIZE)
 
@@ -57,8 +57,6 @@ void visitGCRoots(void (*visitor)(void **root)) {
   }
 }
 
-// todo - make the stack entry dynamic, instead of pushing all alocas during the
-// prologue phase
 void *gc_new(int32_t is_pointer) {
   if (allocator->f == NULL) {
     collect();
@@ -81,6 +79,24 @@ void gc_pop() { llvm_gc_root_chain = llvm_gc_root_chain->next; }
 void gc_push(struct StackEntry *se) {
   se->next = llvm_gc_root_chain;
   llvm_gc_root_chain = se;
+}
+
+void *gc_proj(void *l, int64_t idx) {
+  if (l == NULL) {
+    fprintf(stderr, "Index out of bounds: %ld\n", idx);
+    abort();
+  }
+  void *car = l;
+  void *cdr = (void *)((char *)l + 8);
+  for (int64_t i = 0; i < idx; i++) {
+    car = *(void **)cdr;
+    if (car == NULL) {
+      fprintf(stderr, "Index out of bounds: %ld\n", idx);
+      abort();
+    }
+    cdr = (void *)((char *)car + 8);
+  }
+  return car;
 }
 
 void collect() {
