@@ -5,6 +5,14 @@ use crate::parser::{
     UnaryOp::UserDefined,
 };
 
+pub fn compare_types(t1: &Type, t2: &Type) -> bool {
+    match (t1.as_ref(), t2.as_ref()) {
+        (TypeKind::List(None), TypeKind::List(_)) => true,
+        (TypeKind::List(_), TypeKind::List(None)) => true,
+        _ => t1 == t2,
+    }
+}
+
 pub struct SymbolTable {
     symbol_table: Vec<HashMap<String, Option<Type>>>,
     prototype_table: HashMap<String, Prototype>,
@@ -114,7 +122,7 @@ impl TypeCheck for DeclKind {
                 prototype.type_check(symbol_table)?;
                 let body_type = body.type_check(symbol_table)?;
                 if let Some(ret_type) = &prototype.ret_type {
-                    if ret_type != &body_type {
+                    if !compare_types(ret_type, &body_type) {
                         return Err(SemanticErrorKind::TypeMismatch {
                             expected: prototype.ret_type.clone().unwrap(),
                             found: body_type,
@@ -138,13 +146,6 @@ impl TypeCheck for Prototype {
         symbol_table: &mut SymbolTable,
     ) -> Result<Self::Output, SemanticErrorKind> {
         for arg in self.args.iter() {
-            if let TypeKind::Tuple(types) = arg.typ.as_ref()
-                && types.len() == 1
-            {
-                return Err(SemanticErrorKind::UnknownType {
-                    name: arg.typ.clone(),
-                });
-            }
             symbol_table.insert(
                 arg.name.clone(),
                 Some(arg.typ.clone()),
@@ -180,7 +181,7 @@ impl TypeCheck for Expr {
                     if let Some(var_body) = var.val.as_mut() {
                         let body_type = var_body.type_check(symbol_table)?;
                         if let Some(var_type) = var.t.as_ref()
-                            && var_type != &body_type
+                            && !compare_types(var_type, &body_type)
                         {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: var_type.clone(),
@@ -213,7 +214,7 @@ impl TypeCheck for Expr {
                 BinaryOp::Add | BinaryOp::Lt | BinaryOp::Mult | BinaryOp::Sub => {
                     let left_type = left.type_check(symbol_table)?;
                     let right_type = right.type_check(symbol_table)?;
-                    if left_type != right_type {
+                    if !compare_types(&left_type, &right_type) {
                         return Err(SemanticErrorKind::TypeMismatch {
                             expected: left_type,
                             found: right_type,
@@ -232,12 +233,13 @@ impl TypeCheck for Expr {
                         ExprKind::Identifier(name, _) => name,
                         ExprKind::Projection(id, _) => {
                             let left_type = left_type?;
-                            if left_type != right_type {
+                            if !compare_types(&left_type, &right_type) {
                                 return Err(SemanticErrorKind::TypeMismatch {
                                     expected: left_type,
                                     found: right_type,
                                 });
                             }
+                            // wrong??
                             if !matches!(
                                 id.as_ref(),
                                 ExprKind::Identifier(_, _) | ExprKind::Projection(_, _)
@@ -250,17 +252,14 @@ impl TypeCheck for Expr {
                     };
                     let (id_typ, scope) = symbol_table.get(name);
                     if let Some(Some(typ)) = id_typ {
-                        if !matches!(right_type.as_ref(), TypeKind::List(None)) && right_type != typ
-                        {
+                        if !compare_types(&right_type, &typ) {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: typ,
                                 found: right_type,
                             });
                         }
                         Ok(Box::new(TypeKind::Unit))
-                    } else if let Some(None) = id_typ
-                        && !matches!(right_type.as_ref(), TypeKind::List(None))
-                    {
+                    } else if let Some(None) = id_typ {
                         symbol_table.insert(
                             name.clone(),
                             Some(right_type.clone()),
@@ -277,13 +276,13 @@ impl TypeCheck for Expr {
                     if let Some(proto) = symbol_table.get_proto(&name) {
                         let left_type = left.type_check(symbol_table)?;
                         let right_type = right.type_check(symbol_table)?;
-                        if left_type != proto.args[0].typ {
+                        if !compare_types(&left_type, &proto.args[0].typ) {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: proto.args[0].typ.clone(),
                                 found: left_type,
                             });
                         }
-                        if right_type != proto.args[1].typ {
+                        if !compare_types(&right_type, &proto.args[1].typ) {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: proto.args[1].typ.clone(),
                                 found: right_type,
@@ -301,7 +300,7 @@ impl TypeCheck for Expr {
                     name.push(*c);
                     if let Some(proto) = symbol_table.get_proto(&name) {
                         let param_type = expr.type_check(symbol_table)?;
-                        if param_type != proto.args[0].typ {
+                        if !compare_types(&param_type, &proto.args[0].typ) {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: proto.args[0].typ.clone(),
                                 found: param_type,
@@ -326,7 +325,7 @@ impl TypeCheck for Expr {
                         expected: Box::new(TypeKind::I64),
                         found: cond_type,
                     })
-                } else if expr1_type != expr2_type {
+                } else if !compare_types(&expr1_type, &expr2_type) {
                     Err(SemanticErrorKind::TypeMismatch {
                         expected: expr1_type,
                         found: expr2_type,
@@ -345,7 +344,7 @@ impl TypeCheck for Expr {
                     }
                     for (i, param) in params.iter_mut().enumerate() {
                         let param_type = param.type_check(symbol_table)?;
-                        if param_type != proto.args[i].typ {
+                        if !compare_types(&param_type, &proto.args[i].typ) {
                             return Err(SemanticErrorKind::TypeMismatch {
                                 expected: proto.args[i].typ.clone(),
                                 found: param_type,
@@ -373,7 +372,7 @@ impl TypeCheck for Expr {
 
                 if let Some(step) = step {
                     let step_type = step.type_check(symbol_table)?;
-                    if step_type != start_type {
+                    if !compare_types(&step_type, &start_type) {
                         return Err(SemanticErrorKind::TypeMismatch {
                             expected: start_type,
                             found: step_type,
@@ -443,17 +442,25 @@ impl TypeCheck for Expr {
                 Ok(t[n as usize].clone())
             }
             ExprKind::Pair(car, cdr) => {
-                let mut typ = None;
                 if let Some(expr) = car {
-                    typ = Some(expr.type_check(symbol_table)?);
+                    let car_type = expr.type_check(symbol_table)?;
                     let cdr_type = cdr.type_check(symbol_table)?;
-                    if let TypeKind::List(t) = cdr_type.as_ref()
-                        && &typ != t
-                    {
-                        return Err(SemanticErrorKind::UniqueTypes);
+                    match cdr_type.as_ref() {
+                        TypeKind::List(None) | TypeKind::Unit => {
+                            Ok(Box::new(TypeKind::List(Some(car_type))))
+                        }
+                        TypeKind::List(Some(t)) => {
+                            if !compare_types(&car_type, t) {
+                                Err(SemanticErrorKind::UniqueTypes)
+                            } else {
+                                Ok(Box::new(TypeKind::List(Some(car_type))))
+                            }
+                        }
+                        _ => Err(SemanticErrorKind::UniqueTypes),
                     }
+                } else {
+                    Ok(Box::new(TypeKind::List(None)))
                 }
-                Ok(Box::new(TypeKind::List(typ)))
             }
         }
     }

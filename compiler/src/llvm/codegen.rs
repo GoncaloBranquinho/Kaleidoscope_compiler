@@ -7,7 +7,6 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{AnyType, BasicType, BasicTypeEnum};
 use inkwell::values::{
@@ -533,7 +532,7 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                         Ok(res.into())
                     }
                     _ => Err(CompilerError::Llvm(
-                        "Expression must have compatible types".to_string(),
+                        "Expression must have supported types".to_string(),
                     )),
                 }
             }
@@ -1011,7 +1010,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
 
                 // optimizing the newly created function
 
-                let options = PassBuilderOptions::create();
+                /*let options = PassBuilderOptions::create();
 
                 if let Err(e) = fn_value.run_passes(
                     "mem2reg,instcombine,reassociate,gvn,simplifycfg",
@@ -1019,7 +1018,7 @@ impl<'ctx> CodeGen<'ctx> for DeclKind {
                     options,
                 ) {
                     return Err(CompilerError::Llvm(e.to_string_lossy().to_string()));
-                }
+                }*/
 
                 Ok(fn_value)
             }
