@@ -34,11 +34,11 @@ pub fn compile(
         }
     };
 
-    println!("Before type checknig: {:?}", ast);
+    //println!("Before type checknig: {:?}", ast);
 
     ast.type_check(symbol_table)?;
 
-    //println!("After type checking: {:?}", ast);
+    println!("After type checking: {:?}", ast);
 
     for decl in ast.iter() {
         let fn_value = decl.codegen(codegen_builder)?;

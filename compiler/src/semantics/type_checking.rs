@@ -13,6 +13,83 @@ pub fn compare_types(t1: &Type, t2: &Type) -> bool {
     }
 }
 
+pub fn is_runtime_function(
+    name: &str,
+    params: &mut [Expr],
+    symbol_table: &mut SymbolTable,
+) -> Result<Option<Type>, SemanticErrorKind> {
+    match name {
+        "empty" => {
+            if params.len() != 1 {
+                Err(SemanticErrorKind::InvalidArgumentSize {
+                    expected: 1,
+                    found: params.len(),
+                })
+            } else {
+                let t = params[0].type_check(symbol_table)?;
+                match t.as_ref() {
+                    TypeKind::List(_) | TypeKind::Nil => Ok(Some(Box::new(TypeKind::I64))),
+                    _ => Err(SemanticErrorKind::NotHeapObject { found: t }),
+                }
+            }
+        }
+        "car" => {
+            if params.len() != 1 {
+                Err(SemanticErrorKind::InvalidArgumentSize {
+                    expected: 1,
+                    found: params.len(),
+                })
+            } else {
+                let t = params[0].type_check(symbol_table)?;
+                match t.as_ref() {
+                    TypeKind::List(list_t) => Ok(Some(list_t.clone())),
+                    _ => Err(SemanticErrorKind::NotHeapObject { found: t }),
+                }
+            }
+        }
+        "cdr" => {
+            if params.len() != 1 {
+                Err(SemanticErrorKind::InvalidArgumentSize {
+                    expected: 1,
+                    found: params.len(),
+                })
+            } else {
+                let t = params[0].type_check(symbol_table)?;
+                match t.as_ref() {
+                    TypeKind::List(_) => Ok(Some(t)),
+                    _ => Err(SemanticErrorKind::NotHeapObject { found: t }),
+                }
+            }
+        }
+        "cons" => {
+            if params.len() != 2 {
+                Err(SemanticErrorKind::InvalidArgumentSize {
+                    expected: 2,
+                    found: params.len(),
+                })
+            } else {
+                let t0 = params[0].type_check(symbol_table)?;
+                let t1 = params[1].type_check(symbol_table)?;
+                let t = Box::new(TypeKind::List(t0));
+                if t1 != Box::new(TypeKind::Unit) && !compare_types(&t, &t1) {
+                    Err(SemanticErrorKind::TypeMismatch {
+                        expected: t,
+                        found: t1,
+                    })
+                } else {
+                    match t1.as_ref() {
+                        TypeKind::List(_) | TypeKind::Unit => Ok(Some(t)),
+                        _ => Err(SemanticErrorKind::NotHeapObject { found: t1 }),
+                    }
+                }
+            }
+        }
+        _ => Err(SemanticErrorKind::UnknownFunction {
+            name: name.to_string(),
+        }),
+    }
+}
+
 pub struct SymbolTable {
     symbol_table: Vec<HashMap<String, Option<Type>>>,
     prototype_table: HashMap<String, Prototype>,
@@ -257,6 +334,13 @@ impl TypeCheck for Expr {
                                 found: right_type,
                             });
                         }
+                        if let TypeKind::Nil = typ.as_ref() {
+                            symbol_table.insert(
+                                name.clone(),
+                                Some(right_type.clone()),
+                                symbol_table.len() - 1 - scope,
+                            );
+                        }
                         Ok(Box::new(TypeKind::Unit))
                     } else if let Some(None) = id_typ {
                         symbol_table.insert(
@@ -333,7 +417,7 @@ impl TypeCheck for Expr {
                     Ok(expr1_type)
                 }
             }
-            ExprKind::Call(name, params) => {
+            ExprKind::Call(name, params, ret) => {
                 if let Some(proto) = symbol_table.get_proto(name) {
                     if proto.args.len() != params.len() {
                         return Err(SemanticErrorKind::InvalidArgumentSize {
@@ -350,7 +434,12 @@ impl TypeCheck for Expr {
                             });
                         }
                     }
-                    Ok(proto.ret_type.unwrap())
+                    let t = proto.ret_type.unwrap();
+                    *ret = Some(t.clone());
+                    Ok(t)
+                } else if let Some(ret_type) = is_runtime_function(name, params, symbol_table)? {
+                    *ret = Some(ret_type.clone());
+                    Ok(ret_type)
                 } else {
                     Err(SemanticErrorKind::UnknownFunction { name: name.clone() })
                 }
@@ -502,4 +591,5 @@ pub enum SemanticErrorKind {
     InvalidField { idx: i64, on: Type },
     Immutable { val: Expr },
     UniqueTypes,
+    NotHeapObject { found: Type },
 }

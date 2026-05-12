@@ -17,8 +17,9 @@ struct StackEntry {
 };
 
 typedef struct Object {
-  int32_t is_marked;
-  int32_t is_pointer;
+  int16_t is_marked;
+  int16_t is_pointer;
+  int32_t car_t;
 } Object;
 
 typedef struct ConsCell {
@@ -52,7 +53,7 @@ struct StackEntry *get_gc_root_chain();
 void gc_pop();
 void gc_push(struct StackEntry *se);
 void collect();
-void *gc_new(int32_t is_pointer);
+void *gc_new(int16_t is_pointer, int32_t car_t);
 void markFromRoots(void **root);
 void mark(void *ptr);
 void sweep();
@@ -60,4 +61,8 @@ void setMarked(void *ptr);
 int isMarked(void *ptr);
 Object *extractHeader(void *ptr);
 int initAllocator();
+void *gc_car(void *l);
+void *gc_cdr(void *l);
+int64_t gc_empty(void *l);
+void set_cdr(void *l, void *new_cdr);
 #endif

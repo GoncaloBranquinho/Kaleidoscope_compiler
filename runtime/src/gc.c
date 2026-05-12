@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define NUM_OF_CELLS 1
+#define NUM_OF_CELLS 10000
 #define CELL_SIZE 24
 #define ALLOCATOR_SIZE (NUM_OF_CELLS * CELL_SIZE)
 
@@ -57,7 +57,7 @@ void visitGCRoots(void (*visitor)(void **root)) {
   }
 }
 
-void *gc_new(int32_t is_pointer) {
+void *gc_new(int16_t is_pointer, int32_t car_t) {
   if (allocator->f == NULL) {
     collect();
     if (allocator->f == NULL) {
@@ -68,6 +68,7 @@ void *gc_new(int32_t is_pointer) {
   Object *object = (Object *)((char *)allocator->f - 16);
   object->is_marked = 0;
   object->is_pointer = is_pointer;
+  object->car_t = car_t;
   allocator->f = allocator->f->cdr;
   return (void *)(object + 1);
 }
@@ -75,6 +76,38 @@ void *gc_new(int32_t is_pointer) {
 struct StackEntry *get_gc_root_chain() { return llvm_gc_root_chain; }
 
 void gc_pop() { llvm_gc_root_chain = llvm_gc_root_chain->next; }
+
+/*void gc_pop_root(void *root) {
+  for (size_t i = 0; i < llvm_gc_root_chain->map->num_roots; i++) {
+    if (llvm_gc_root_chain->roots[i] == root) {
+
+    }
+  }
+}*/
+
+void *gc_car(void *l) {
+  if (l == NULL) {
+    fprintf(stderr, "Cannot dereference a null pointer.\n");
+    abort();
+  }
+  return l;
+}
+
+void *gc_cdr(void *l) {
+  if (l == NULL) {
+    fprintf(stderr, "Cannot dereference a null pointer.\n");
+    abort();
+  }
+  void *cdr = *(void **)((char *)l + 8);
+  return cdr;
+}
+
+int64_t gc_empty(void *l) { return l == NULL; }
+
+void set_cdr(void *l, void *new_cdr) {
+  void **cdr_ptr = (void **)((char *)l + 8);
+  *cdr_ptr = new_cdr;
+}
 
 void gc_push(struct StackEntry *se) {
   se->next = llvm_gc_root_chain;

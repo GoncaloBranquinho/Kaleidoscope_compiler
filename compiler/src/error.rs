@@ -87,6 +87,9 @@ impl fmt::Display for SemanticErrorKind {
             SemanticErrorKind::UniqueTypes => {
                 write!(f, "List cannot have different types")
             }
+            SemanticErrorKind::NotHeapObject { found } => {
+                write!(f, "Type mismatch: expected: 'List', found: '{:?}'", found)
+            }
         }
     }
 }

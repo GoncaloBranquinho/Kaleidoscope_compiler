@@ -12,7 +12,7 @@ pub enum ExprKind {
     Seq(Vec<Expr>),
     Unary(UnaryOp, Expr),
     IfThenElse(Expr, Expr, Expr),
-    Call(String, Vec<Expr>),
+    Call(String, Vec<Expr>, Option<Type>),
     ForLoop(String, Expr, Expr, Option<Expr>, Expr),
     Projection(Expr, Expr, Option<Type>),
 }

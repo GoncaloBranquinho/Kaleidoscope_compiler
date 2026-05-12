@@ -25,6 +25,7 @@ use llvm_sys::orc2::{
 };
 
 use crate::error::CompilerError;
+use crate::parser::expr::ConsKind;
 use crate::parser::op::BinaryOp;
 use crate::parser::{DeclKind, Expr, ExprKind, Literal, Prototype, Type, TypeKind, UnaryOp};
 
@@ -82,6 +83,14 @@ fn get_type<'ctx>(t: &Type, context: &CodeGenBuilder<'ctx>) -> BasicTypeEnum<'ct
     }
 }
 
+fn type_to_int<'ctx>(t: &BasicTypeEnum<'ctx>) -> u64 {
+    match t {
+        BasicTypeEnum::FloatType(_) => 2,
+        BasicTypeEnum::IntType(_) => 3,
+        _ => unreachable!(),
+    }
+}
+
 // Prototypes must declare the type of each argument and as well the return type
 fn get_function<'ctx>(
     name: &str,
@@ -96,9 +105,34 @@ fn get_function<'ctx>(
         return proto.codegen(context);
     }
 
-    Err(CompilerError::Llvm(
-        "Unknown function referenced".to_string(),
-    ))
+    match name {
+        "empty" => Ok(
+            if let Some(proj) = context.module.get_function("gc_empty") {
+                proj
+            } else {
+                let ptr_type = context.ctx.ptr_type(AddressSpace::default());
+                let i64_type = context.ctx.i64_type().as_basic_type_enum();
+                let return_type = i64_type;
+                let fn_type = return_type.fn_type(&[ptr_type.into()], false);
+                context.module.add_function("gc_empty", fn_type, None)
+            },
+        ),
+        "car" | "cdr" => Ok(
+            if let Some(proj) = context.module.get_function(&format!("gc_{}", name)) {
+                proj
+            } else {
+                let ptr_type = context.ctx.ptr_type(AddressSpace::default());
+                let return_type = ptr_type;
+                let fn_type = return_type.fn_type(&[ptr_type.into()], false);
+                context
+                    .module
+                    .add_function(&format!("gc_{}", name), fn_type, None)
+            },
+        ),
+        _ => Err(CompilerError::Llvm(
+            "Unknown function referenced".to_string(),
+        )),
+    }
 }
 
 fn create_entry_block_alloca<'ctx>(
@@ -137,7 +171,10 @@ fn gc_new_function<'ctx>(context: &mut CodeGenBuilder<'ctx>) -> FunctionValue<'c
         gc_new
     } else {
         let return_type = context.ctx.ptr_type(AddressSpace::default());
-        let fn_type = return_type.fn_type(&[context.ctx.i32_type().into()], false);
+        let fn_type = return_type.fn_type(
+            &[context.ctx.i16_type().into(), context.ctx.i32_type().into()],
+            false,
+        );
         context.module.add_function("gc_new", fn_type, None)
     }
 }
@@ -296,24 +333,40 @@ fn codegen_pair<'ctx>(
             .const_null()
             .as_basic_value_enum());
     }
-    let prev_car = match exprs[0].as_ref() {
-        ExprKind::Cons(_, _) => codegen_pair(context, &exprs[0], true)?,
-        _ => exprs[0].codegen(context)?,
+    let (prev_car, arg_kind) = match exprs[0].as_ref() {
+        ExprKind::Cons(_, kind) => (codegen_pair(context, &exprs[0], true)?, Some(kind)),
+        _ => (exprs[0].codegen(context)?, None),
     };
     let fn_value = gc_new_function(context);
     let arg = if prev_car.is_pointer_value() {
         context
             .ctx
-            .i32_type()
+            .i16_type()
             .const_int(1, false)
             .as_basic_value_enum()
     } else {
-        context.ctx.i32_type().const_zero().as_basic_value_enum()
+        context.ctx.i16_type().const_zero().as_basic_value_enum()
+    };
+    let arg1 = if let Some(kind) = arg_kind {
+        match kind {
+            ConsKind::List => 0,
+            ConsKind::Tuple => 1,
+        }
+    } else {
+        match exprs[0].as_ref() {
+            ExprKind::Literal(Literal::Unit) => 4,
+            _ => type_to_int(&prev_car.get_type()),
+        }
     };
 
-    let call = context
-        .builder
-        .build_call(fn_value, &[arg.into()], "car_ptr")?;
+    let call = context.builder.build_call(
+        fn_value,
+        &[
+            arg.into(),
+            context.ctx.i32_type().const_int(arg1, false).into(),
+        ],
+        "car_ptr",
+    )?;
     let prev_car_ptr = call
         .try_as_basic_value()
         .basic()
@@ -358,23 +411,39 @@ fn codegen_pair<'ctx>(
     let size = exprs.len();
     let mut i = 1;
     while i < size {
-        let curr_car = match exprs[i].as_ref() {
-            ExprKind::Cons(_, _) => codegen_pair(context, &exprs[i], false)?,
-            _ => exprs[i].codegen(context)?,
+        let (curr_car, arg_kind) = match exprs[i].as_ref() {
+            ExprKind::Cons(_, kind) => (codegen_pair(context, &exprs[i], true)?, Some(kind)),
+            _ => (exprs[i].codegen(context)?, None),
         };
         let arg = if curr_car.is_pointer_value() {
             context
                 .ctx
-                .i32_type()
+                .i16_type()
                 .const_int(1, false)
                 .as_basic_value_enum()
         } else {
-            context.ctx.i32_type().const_zero().as_basic_value_enum()
+            context.ctx.i16_type().const_zero().as_basic_value_enum()
+        };
+        let arg1 = if let Some(kind) = arg_kind {
+            match kind {
+                ConsKind::List => 0,
+                ConsKind::Tuple => 1,
+            }
+        } else {
+            match exprs[i].as_ref() {
+                ExprKind::Literal(Literal::Unit) => 4,
+                _ => type_to_int(&curr_car.get_type()),
+            }
         };
 
-        let call = context
-            .builder
-            .build_call(fn_value, &[arg.into()], "car_ptr")?;
+        let call = context.builder.build_call(
+            fn_value,
+            &[
+                arg.into(),
+                context.ctx.i32_type().const_int(arg1, false).into(),
+            ],
+            "car_ptr",
+        )?;
         let curr_car_ptr = call
             .try_as_basic_value()
             .basic()
@@ -401,6 +470,102 @@ fn codegen_pair<'ctx>(
         context.ctx.ptr_type(AddressSpace::default()).const_null(),
     )?;
     Ok(prev_car_ptr.as_basic_value_enum())
+}
+
+fn codegen_cons<'ctx>(
+    exprs: &[Expr],
+    ret_type: Option<&Type>,
+    context: &mut CodeGenBuilder<'ctx>,
+    is_first_element: bool,
+) -> Result<BasicValueEnum<'ctx>, CompilerError> {
+    let expr1 = exprs[0].codegen(context)?;
+    println!("{:?}\n {:?}", exprs[0], expr1);
+    let fn_value = gc_new_function(context);
+    let arg = if expr1.is_pointer_value() {
+        context
+            .ctx
+            .i16_type()
+            .const_int(1, false)
+            .as_basic_value_enum()
+    } else {
+        context.ctx.i16_type().const_zero().as_basic_value_enum()
+    };
+
+    let ret_type = match ret_type.unwrap().as_ref() {
+        TypeKind::List(t) => t,
+        _ => unreachable!(),
+    };
+
+    let arg1 = match ret_type.as_ref() {
+        TypeKind::Tuple(_) => 1,
+        TypeKind::List(_) => 0,
+        TypeKind::Nil => 0,
+        TypeKind::Unit => 4,
+        _ => type_to_int(&expr1.get_type()),
+    };
+    let call = context.builder.build_call(
+        fn_value,
+        &[
+            arg.into(),
+            context.ctx.i32_type().const_int(arg1, false).into(),
+        ],
+        "car_ptr",
+    )?;
+    let expr1_ptr = call
+        .try_as_basic_value()
+        .basic()
+        .ok_or(CompilerError::Llvm(
+            "Expected function to return a value".to_string(),
+        ))?
+        .into_pointer_value();
+
+    context.builder.build_store(expr1_ptr, expr1)?;
+
+    if is_first_element {
+        let block = context
+            .builder
+            .get_insert_block()
+            .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
+        let function = block
+            .get_parent()
+            .ok_or_else(|| CompilerError::Llvm("Basic Block has no parent function".to_string()))?;
+
+        let aux_alloca = create_entry_block_alloca(
+            context,
+            function,
+            "aux_alloca",
+            context
+                .ctx
+                .ptr_type(AddressSpace::default())
+                .as_basic_type_enum(),
+        )?;
+
+        context.builder.build_store(aux_alloca, expr1_ptr)?;
+    }
+
+    let expr2 = match exprs[1].as_ref() {
+        ExprKind::Call(name, args, kind) if name == "cons" => {
+            codegen_cons(args, kind.as_ref(), context, false)?
+        }
+        ExprKind::Literal(Literal::Unit) => context
+            .ctx
+            .ptr_type(AddressSpace::default())
+            .const_null()
+            .as_basic_value_enum(),
+        _ => exprs[1].codegen(context)?,
+    };
+
+    let expr2_ptr = unsafe {
+        context.builder.build_gep(
+            context.ctx.i8_type(),
+            expr1_ptr,
+            &[context.ctx.i64_type().const_int(8, false)],
+            "cdr_ptr",
+        )
+    }?;
+
+    context.builder.build_store(expr2_ptr, expr2)?;
+    Ok(expr1_ptr.as_basic_value_enum())
 }
 
 pub struct CodeGenBuilder<'ctx> {
@@ -685,7 +850,10 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     )),
                 }
             }
-            ExprKind::Call(name, args) => {
+            ExprKind::Call(name, args, ret_type) => {
+                if name == "cons" {
+                    return codegen_cons(args, ret_type.as_ref(), context, true);
+                }
                 let callee = get_function(name, context)?;
                 let args_len = args.len();
                 if args_len != callee.count_params() as usize {
@@ -703,7 +871,24 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 let call = context.builder.build_call(callee, &vec, "calltmp");
 
                 match call {
-                    Ok(v) => Ok(v.try_as_basic_value().basic().unwrap()),
+                    Ok(v) => {
+                        let v = v.try_as_basic_value().basic().ok_or(CompilerError::Llvm(
+                            "Expected function to return a value".to_string(),
+                        ))?;
+                        let v = if name == "car" {
+                            let car_result = v.into_pointer_value();
+                            let ptr_type = get_type(ret_type.as_ref().unwrap(), context);
+                            let value = context.builder.build_load(
+                                ptr_type,
+                                car_result,
+                                "extracted_value",
+                            )?;
+                            value.as_basic_value_enum()
+                        } else {
+                            v
+                        };
+                        Ok(v)
+                    }
                     Err(e) => Err(e.into()),
                 }
             }
@@ -1208,17 +1393,17 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
                     }
                     TypeKind::Tuple(_) => {
                         let res = jit.call::<*const u8>(executer_addr);
-                        print_cons(res);
+                        print_cons(res, 1);
                         println!();
                     }
                     TypeKind::List(_) => {
                         let res = jit.call::<*const u8>(executer_addr);
-                        print_cons(res);
+                        print_cons(res, 0);
                         println!();
                     }
                     TypeKind::Nil => {
                         let res = jit.call::<*const u8>(executer_addr);
-                        print_cons(res);
+                        print_cons(res, 0);
                         println!();
                     }
                 }
@@ -1229,8 +1414,12 @@ impl<'ctx> JitCompiler<'ctx> for DeclKind {
     }
 }
 
-fn print_cons(res: *const u8) {
-    print!("[");
+fn print_cons(res: *const u8, t: i32) {
+    if t == 0 {
+        print!("[");
+    } else {
+        print!("(");
+    }
     unsafe {
         let mut cell = res;
         let mut flag = false;
@@ -1238,17 +1427,27 @@ fn print_cons(res: *const u8) {
             if flag {
                 print!(",");
             }
-            let is_pointer = *(cell.sub(4) as *const i32) == 1;
+            let is_pointer = *(cell.sub(6) as *const i16) == 1;
+            let cell_t = *(cell.sub(4) as *const i32);
+
             if is_pointer {
-                print_cons(*(cell as *const *const u8));
+                print_cons(*(cell as *const *const u8), cell_t);
             } else {
                 let car = *(cell as *const u64);
-                print!("{}", car);
+                if cell_t == 4 {
+                    print!("()");
+                } else {
+                    print!("{}", car);
+                }
             }
             let cdr = *(cell.add(8) as *const *const u8);
             cell = cdr;
             flag = true;
         }
     }
-    print!("]");
+    if t == 0 {
+        print!("]");
+    } else {
+        print!(")");
+    }
 }

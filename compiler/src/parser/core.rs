@@ -395,7 +395,7 @@ impl<'a, I: Iterator<Item = TokenResult>> Parser<'a, I> {
             }
         }
         self.consume_token()?;
-        let expr_call = ExprKind::Call(identifier.clone(), args);
+        let expr_call = ExprKind::Call(identifier.clone(), args, None);
         Ok(Box::new(expr_call))
     }
 
