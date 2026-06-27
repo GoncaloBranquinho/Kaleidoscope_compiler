@@ -479,7 +479,7 @@ fn codegen_cons<'ctx>(
     is_first_element: bool,
 ) -> Result<BasicValueEnum<'ctx>, CompilerError> {
     let expr1 = exprs[0].codegen(context)?;
-    println!("{:?}\n {:?}", exprs[0], expr1);
+    //println!("{:?}\n {:?}", exprs[0], expr1);
     let fn_value = gc_new_function(context);
     let arg = if expr1.is_pointer_value() {
         context
@@ -926,7 +926,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .builder
                     .build_conditional_branch(cond_v, then_bb, else_bb)?;
 
-                // Codegen then_basic_block
                 context.builder.position_at_end(then_bb);
                 let then_v = fst.codegen(context)?;
                 context.builder.build_unconditional_branch(merge_bb)?;
@@ -935,7 +934,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .get_insert_block()
                     .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
 
-                // Codegen else_basic_block
                 context.builder.position_at_end(else_bb);
                 let else_v = snd.codegen(context)?;
                 context.builder.build_unconditional_branch(merge_bb)?;
@@ -944,7 +942,6 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                     .get_insert_block()
                     .ok_or_else(|| CompilerError::Llvm("No insert point".to_string()))?;
 
-                // Codegen merge_basic_block
                 context.builder.position_at_end(merge_bb);
                 let phi_node = context.builder.build_phi(then_v.get_type(), "iftmp")?;
 
@@ -982,6 +979,12 @@ impl<'ctx> CodeGen<'ctx> for Expr {
                 context.builder.position_at_end(loop_cond_bb);
 
                 let end_cond = end.codegen(context)?.into_int_value();
+                let end_cond = context.builder.build_int_compare(
+                    IntPredicate::NE,
+                    end_cond,
+                    end_cond.get_type().const_zero(),
+                    "loopcond",
+                )?;
 
                 let loop_bb = context.ctx.append_basic_block(function, "loop_bb");
 
