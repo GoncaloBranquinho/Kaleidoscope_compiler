@@ -23,6 +23,10 @@ Since I had already completed the tutorial, I decided to extend Kaleidoscope to 
 This is an example of how you may give instructions on setting up your project locally.
 To get a local copy up and running follow these simple example steps.
 
+## Requirements
+
+- Nix (with flakes enabled)
+
 ### Installation
 
 1. Clone the repo
@@ -30,20 +34,18 @@ To get a local copy up and running follow these simple example steps.
    git clone https://github.com/GoncaloBranquinho/kaleipl.git
    cd kaleipl
    ```
-2. Run
-  ```sh
+
+2. Nix Develop
+   ```sh
+   nix develop
+   ```
+
+3. Run
+   ```sh
    cargo run
    ```
 
 <br/>
-
-
-
-<!-- USAGE EXAMPLES -->
-## Usage
-...
-<br/>
-
 
 
 <!-- LICENSE -->
