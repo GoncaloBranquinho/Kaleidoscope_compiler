@@ -71,7 +71,7 @@ pub fn is_runtime_function(
                 let t0 = params[0].type_check(symbol_table)?;
                 let t1 = params[1].type_check(symbol_table)?;
                 let t = Box::new(TypeKind::List(t0));
-                if t1 != Box::new(TypeKind::Unit) && !compare_types(&t, &t1) {
+                if *t1 != TypeKind::Unit && !compare_types(&t, &t1) {
                     Err(SemanticErrorKind::TypeMismatch {
                         expected: t,
                         found: t1,
